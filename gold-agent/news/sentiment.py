@@ -1,23 +1,40 @@
 """
 news/sentiment.py
 Fetches gold-related news headlines from NewsAPI.
-Falls back to realistic mock headlines if the API key is missing or the
-request fails, ensuring the application always runs.
+Falls back to a rotating pool of mock headlines if the API key is missing,
+so the app always shows different headlines each refresh.
 """
 
 import os
+import random
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Mock headlines used as fallback when NewsAPI is unavailable
-MOCK_HEADLINES = [
+# Large pool of realistic mock headlines — 5 are randomly picked each refresh
+# so users never see the same set twice when no API key is configured.
+MOCK_HEADLINE_POOL = [
     "Gold prices surge amid global economic uncertainty and inflation fears",
     "Central banks increase gold reserves as dollar weakens",
     "Fed signals potential rate cuts, boosting gold demand",
     "Geopolitical tensions drive safe-haven buying in gold market",
     "Gold ETF inflows hit six-month high as investors seek protection",
+    "US dollar weakness pushes gold to three-month high",
+    "Goldman Sachs raises gold price target to $3,000 by year-end",
+    "Middle East tensions fuel surge in safe-haven gold buying",
+    "IMF warns of global recession risk — gold seen as key hedge",
+    "Gold holds steady as traders await Fed interest rate decision",
+    "Chinese central bank adds to gold reserves for fifth straight month",
+    "Inflation data surprise sends gold futures sharply higher",
+    "Gold miners report record profits as bullion prices climb",
+    "BRICS nations accelerate de-dollarization, boosting gold demand",
+    "Gold hits record high as US debt ceiling fears intensify",
+    "Analysts warn of gold correction after overbought RSI reading",
+    "Physical gold demand in Asia remains robust despite high prices",
+    "Strong US jobs data dampens gold rally, dollar recovers",
+    "Silver outperforms gold as industrial demand picks up",
+    "Gold prices under pressure as Fed holds rates higher for longer",
 ]
 
 
@@ -25,11 +42,11 @@ def get_gold_news(max_headlines: int = 5) -> list[str]:
     """
     Fetch the latest gold-related news headlines from NewsAPI.
 
-    Requires NEWS_API_KEY in the .env file. If the key is missing or the
-    request fails, returns mock headlines so the application continues running.
+    If NEWS_API_KEY is missing or the request fails, returns a random
+    selection from MOCK_HEADLINE_POOL so every refresh shows different headlines.
 
     Args:
-        max_headlines (int): Maximum number of headlines to return. Default is 5.
+        max_headlines (int): Maximum number of headlines to return. Default 5.
 
     Returns:
         list[str]: List of headline strings (real or mock).
@@ -37,8 +54,8 @@ def get_gold_news(max_headlines: int = 5) -> list[str]:
     api_key = os.getenv("NEWS_API_KEY", "").strip()
 
     if not api_key or api_key == "your_key_here":
-        print("[sentiment.py] No NEWS_API_KEY found. Using mock headlines.")
-        return MOCK_HEADLINES[:max_headlines]
+        print("[sentiment.py] No NEWS_API_KEY. Using rotating mock headlines.")
+        return random.sample(MOCK_HEADLINE_POOL, min(max_headlines, len(MOCK_HEADLINE_POOL)))
 
     try:
         url = "https://newsapi.org/v2/everything"
@@ -58,64 +75,60 @@ def get_gold_news(max_headlines: int = 5) -> list[str]:
 
         if not articles:
             print("[sentiment.py] No articles returned. Using mock headlines.")
-            return MOCK_HEADLINES[:max_headlines]
+            return random.sample(MOCK_HEADLINE_POOL, min(max_headlines, len(MOCK_HEADLINE_POOL)))
 
-        headlines = []
-        for article in articles[:max_headlines]:
-            title = article.get("title", "").strip()
-            if title and title != "[Removed]":
-                headlines.append(title)
+        headlines = [
+            a.get("title", "").strip()
+            for a in articles[:max_headlines]
+            if a.get("title", "").strip() and a.get("title") != "[Removed]"
+        ]
 
         if not headlines:
-            return MOCK_HEADLINES[:max_headlines]
+            return random.sample(MOCK_HEADLINE_POOL, min(max_headlines, len(MOCK_HEADLINE_POOL)))
 
         print(f"[sentiment.py] Fetched {len(headlines)} real headlines.")
         return headlines
 
     except requests.exceptions.Timeout:
-        print("[sentiment.py] NewsAPI request timed out. Using mock headlines.")
-        return MOCK_HEADLINES[:max_headlines]
-
+        print("[sentiment.py] NewsAPI timed out. Using mock headlines.")
     except requests.exceptions.HTTPError as e:
         print(f"[sentiment.py] NewsAPI HTTP error: {e}. Using mock headlines.")
-        return MOCK_HEADLINES[:max_headlines]
-
     except Exception as e:
         print(f"[sentiment.py] Error fetching news: {e}. Using mock headlines.")
-        return MOCK_HEADLINES[:max_headlines]
+
+    return random.sample(MOCK_HEADLINE_POOL, min(max_headlines, len(MOCK_HEADLINE_POOL)))
 
 
 def get_sentiment_summary(headlines: list[str]) -> str:
     """
-    Generate a simple rule-based sentiment summary from headlines.
+    Generate a rule-based sentiment label from headlines.
 
-    Counts bullish vs bearish keywords to infer market sentiment.
+    Counts bullish vs bearish keywords across all headlines.
 
     Args:
         headlines (list[str]): List of news headline strings.
 
     Returns:
-        str: One of "BULLISH", "BEARISH", or "NEUTRAL".
+        str: "BULLISH", "BEARISH", or "NEUTRAL".
     """
-    bullish_keywords = [
+    bullish_kw = [
         "surge", "rise", "gain", "rally", "jump", "soar", "high",
-        "demand", "buying", "boost", "positive", "growth", "record",
+        "demand", "buying", "boost", "positive", "growth", "record", "higher",
     ]
-    bearish_keywords = [
+    bearish_kw = [
         "fall", "drop", "decline", "plunge", "crash", "low", "sell",
-        "loss", "weakness", "down", "negative", "risk", "pressure",
+        "loss", "weakness", "down", "negative", "risk", "pressure", "correction",
     ]
 
     combined = " ".join(headlines).lower()
-    bull_count = sum(combined.count(kw) for kw in bullish_keywords)
-    bear_count = sum(combined.count(kw) for kw in bearish_keywords)
+    bull = sum(combined.count(kw) for kw in bullish_kw)
+    bear = sum(combined.count(kw) for kw in bearish_kw)
 
-    if bull_count > bear_count:
+    if bull > bear:
         return "BULLISH"
-    elif bear_count > bull_count:
+    elif bear > bull:
         return "BEARISH"
-    else:
-        return "NEUTRAL"
+    return "NEUTRAL"
 
 
 # Allow standalone testing

@@ -1,7 +1,8 @@
 anthropic
-gradio
+gradio>=4.15.0
 yfinance
 pandas
 numpy
+matplotlib
 python-dotenv
 requests
