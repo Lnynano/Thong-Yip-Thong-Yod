@@ -1,0 +1,7 @@
+anthropic
+gradio
+yfinance
+pandas
+numpy
+python-dotenv
+requests
