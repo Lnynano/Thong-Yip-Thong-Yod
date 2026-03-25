@@ -116,7 +116,6 @@ checkpoints/
 # Large Data Files
 ############################
 
-data/
 datasets/
 *.csv
 *.parquet
