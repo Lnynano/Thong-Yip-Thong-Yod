@@ -1,6 +1,6 @@
 """
 ui/dashboard.py
-PNS-inspired dark trading dashboard for the Gold Agent.
+PNS-inspired dark trading dashboard for the Thong Yip Thong Yod.
 
 Layout (top to bottom):
   1. Header bar  — title + LIVE indicator
@@ -226,7 +226,33 @@ def _price_html(price_thb: float, price_usd: float, change_thb: float,
 </div>"""
 
 
-def _decision_html(decision: str, confidence: int, reasoning: str) -> str:
+def _trade_mode_html(trade_mode: bool) -> str:
+    """Trade mode status banner."""
+    if trade_mode:
+        return (
+            '<div style="font-family:Courier New,monospace; padding:10px 24px; '
+            'background:#0d1a00; border:1px solid #2a4400; border-radius:6px; '
+            'display:flex; align-items:center; gap:12px;">'
+            '<span style="color:#c9f002; font-size:1.1em; font-weight:900; '
+            'letter-spacing:0.15em;">● TRADE MODE : ON</span>'
+            '<span style="color:#555; font-size:0.78em;">'
+            'Paper trades will execute automatically on BUY / SELL signals ≥ 65% confidence'
+            '</span></div>'
+        )
+    return (
+        '<div style="font-family:Courier New,monospace; padding:10px 24px; '
+        'background:#111; border:1px solid #222; border-radius:6px; '
+        'display:flex; align-items:center; gap:12px;">'
+        '<span style="color:#555; font-size:1.1em; font-weight:900; '
+        'letter-spacing:0.15em;">○ TRADE MODE : OFF</span>'
+        '<span style="color:#444; font-size:0.78em;">'
+        'Analysis running — no trades will be placed'
+        '</span></div>'
+    )
+
+
+def _decision_html(decision: str, confidence: int, reasoning: str,
+                   trade_mode: bool = False) -> str:
     """BUY/SELL/HOLD card with reasoning — PNS style."""
     cfg = {
         "BUY":  ("#c9f002", "📈"),
@@ -234,9 +260,21 @@ def _decision_html(decision: str, confidence: int, reasoning: str) -> str:
         "HOLD": ("#555555", "⏸"),
     }
     color, icon = cfg.get(decision.upper(), ("#555", "?"))
+    # Dim the signal color when trade mode is off
+    if not trade_mode and decision.upper() in ("BUY", "SELL"):
+        color = "#666666"
     lines = "".join(
         f'<div style="margin:3px 0; color:#888; font-size:0.88em;">{l}</div>'
         for l in reasoning.split("\n") if l.strip()
+    )
+    trade_tag = (
+        '<span style="color:#c9f002; font-size:0.72em; letter-spacing:0.1em; '
+        'border:1px solid #2a4400; padding:2px 8px; border-radius:3px; '
+        'background:#0d1a00;">WILL TRADE</span>'
+        if trade_mode and decision.upper() in ("BUY", "SELL") and confidence >= 65
+        else
+        '<span style="color:#444; font-size:0.72em; letter-spacing:0.1em; '
+        'border:1px solid #222; padding:2px 8px; border-radius:3px;">ANALYSIS ONLY</span>'
     )
     return f"""
 <div style="font-family:'Courier New',monospace; padding:20px 24px; background:#0f0f0f;
@@ -248,6 +286,7 @@ def _decision_html(decision: str, confidence: int, reasoning: str) -> str:
     <span style="color:{color}; font-size:2.8em; font-weight:900;
                  letter-spacing:6px;">{icon} {decision.upper()}</span>
     <span style="color:{color}; font-size:1em;">Confidence: {confidence}%</span>
+    {trade_tag}
   </div>
   <div style="margin-top:14px; border-top:1px solid #1e1e1e; padding-top:12px;">
     {lines}
@@ -391,23 +430,27 @@ def _news_html(headlines: list, sentiment: str) -> str:
 # ─────────────────────────────────────────────────────────────
 # Main analysis pipeline
 # ─────────────────────────────────────────────────────────────
-def run_full_analysis() -> tuple:
+def run_full_analysis(trade_mode: bool = False) -> tuple:
     """
     Run the complete pipeline and return values for all UI outputs.
 
+    Args:
+        trade_mode: When True, paper trades are executed automatically.
+                    When False, analysis runs but NO trades are placed.
+
     Returns 15 values:
-        header_html, price_html, decision_html_out,
+        price_html, decision_html_out,
         last_updated, chart_fig, rsi_str, macd_str,
         portfolio_html, equity_chart, outcome_bar_html,
         trade_table_html, news_html_out, log_df,
-        indicators_str, status
+        indicators_str, status, trade_mode_status_html
     """
     try:
         # 1. Price
         from data.fetch import get_gold_price, get_fetch_time
         df = get_gold_price()
         if df.empty:
-            return _error_outputs("Failed to fetch price data.")
+            return _error_outputs("Failed to fetch price data.", trade_mode)
 
         price_usd   = float(df["Close"].iloc[-1])
         prev_usd    = float(df["Close"].iloc[-2]) if len(df) > 1 else price_usd
@@ -457,10 +500,14 @@ def run_full_analysis() -> tuple:
             reasoning = ("ANTHROPIC_API_KEY not set.\n"
                          "Add it to your .env file to enable Claude analysis.")
 
-        # 7. Paper trade execution
+        # 7. Paper trade execution — ONLY when trade_mode is ON
         from trader.paper_engine import execute_paper_trade, get_portfolio_summary, \
                                         get_trade_history, get_equity_history, get_recent_outcomes
-        trade_result = execute_paper_trade(decision, confidence, thb_now)
+        if trade_mode:
+            trade_result = execute_paper_trade(decision, confidence, thb_now)
+        else:
+            trade_result = {"action": "DISABLED", "reason": "Trade mode is OFF"}
+
         portfolio    = get_portfolio_summary(thb_now)
         trades       = get_trade_history(20)
         equity_hist  = get_equity_history()
@@ -483,16 +530,19 @@ def run_full_analysis() -> tuple:
         log_df = get_recent_logs(50)
 
         # Build HTML blocks
-        price_block   = _price_html(thb_now, price_usd, change, fetch_time, rate, rate_src)
-        dec_block     = _decision_html(decision, confidence, reasoning)
-        port_block    = _portfolio_html(portfolio)
-        outcome_bar   = _outcome_bar_html(outcomes)
-        trade_table   = _trade_table_html(trades)
-        last_updated  = f"Last updated: {fetch_time}  ·  auto-refresh every 5 min"
+        price_block  = _price_html(thb_now, price_usd, change, fetch_time, rate, rate_src)
+        dec_block    = _decision_html(decision, confidence, reasoning, trade_mode)
+        port_block   = _portfolio_html(portfolio)
+        outcome_bar  = _outcome_bar_html(outcomes)
+        trade_table  = _trade_table_html(trades)
+        last_updated = f"Last updated: {fetch_time}  ·  auto-refresh every 5 min"
+        tm_html      = _trade_mode_html(trade_mode)
 
-        # Paper trade action notice
+        # Status bar message
         action = trade_result.get("action", "")
-        if action == "OPENED":
+        if not trade_mode:
+            status = f"📊 ANALYSIS ONLY  ·  {decision} {confidence}%  ·  Trade mode is OFF"
+        elif action == "OPENED":
             status = f"✅ OPENED position  ·  {trade_result['size_bw']:.5f} bw @ ฿{trade_result['price_thb']:,.0f}"
         elif action == "CLOSED":
             pnl = trade_result.get("pnl_thb", 0)
@@ -513,16 +563,16 @@ def run_full_analysis() -> tuple:
             log_df,
             indicators_str,
             status,
+            tm_html,
         )
 
     except Exception as e:
         err = f"Error: {e}"
         print(f"[dashboard] {err}")
-        return _error_outputs(err)
+        return _error_outputs(err, trade_mode)
 
 
-def _error_outputs(msg: str) -> tuple:
-    import pandas as pd
+def _error_outputs(msg: str, trade_mode: bool = False) -> tuple:
     from logger.trade_log import get_recent_logs
     from trader.paper_engine import get_portfolio_summary, get_trade_history, \
                                      get_equity_history, get_recent_outcomes
@@ -538,7 +588,7 @@ def _error_outputs(msg: str) -> tuple:
 
     return (
         f'<div style="color:#cc3333;padding:20px;font-family:Courier New;">{msg}</div>',
-        _decision_html("HOLD", 0, msg),
+        _decision_html("HOLD", 0, msg, trade_mode),
         "Last updated: —",
         None,
         "N/A", "N/A",
@@ -548,6 +598,7 @@ def _error_outputs(msg: str) -> tuple:
         get_recent_logs(50),
         "—",
         msg,
+        _trade_mode_html(trade_mode),
     )
 
 
@@ -557,7 +608,7 @@ def _error_outputs(msg: str) -> tuple:
 def build_ui() -> gr.Blocks:
     """Build and return the PNS-style Gradio dashboard."""
 
-    with gr.Blocks(title="GOLD AGENT", theme=gr.themes.Base(), css=PNS_CSS) as demo:
+    with gr.Blocks(title="Thong Yip Thong Yod", theme=gr.themes.Base(), css=PNS_CSS) as demo:
 
         # ── Header ──────────────────────────────────────────
         gr.HTML("""
@@ -565,12 +616,29 @@ def build_ui() -> gr.Blocks:
                     background:#0f0f0f; border-bottom:1px solid #1e1e1e;
                     display:flex; justify-content:space-between; align-items:center;">
           <span style="color:#888; font-size:1.1em; font-weight:700;
-                       letter-spacing:0.2em;">🥇 GOLD AGENT</span>
+                       letter-spacing:0.2em;">🥇 Thong Yip Thong Yod</span>
           <span style="color:#555; font-size:0.75em; letter-spacing:0.1em;">
             XAUUSD &nbsp;·&nbsp; PAPER TRADING &nbsp;·&nbsp;
             <span style="color:#c9f002;">● LIVE</span>
           </span>
         </div>""")
+
+        # ── Trade Mode toggle (top of page, always visible) ──
+        with gr.Row():
+            trade_mode_toggle = gr.Checkbox(
+                label="TRADE MODE  —  enable to execute paper trades automatically",
+                value=False,
+                scale=3,
+            )
+            gr.HTML(
+                '<div style="font-family:Courier New,monospace; color:#444; '
+                'font-size:0.75em; padding:12px 0; line-height:1.5em;">'
+                'OFF = analysis only &nbsp;|&nbsp; ON = trades execute on BUY/SELL ≥ 65% conf'
+                '</div>'
+            )
+
+        # ── Trade mode status banner ─────────────────────────
+        trade_mode_status = gr.HTML()
 
         # ── 1. Price ─────────────────────────────────────────
         price_html = gr.HTML()
@@ -641,7 +709,7 @@ def build_ui() -> gr.Blocks:
         # ── Hidden indicators passthrough ────────────────────
         indicators_hidden = gr.Textbox(visible=False)
 
-        # ── Output order (14 outputs) ────────────────────────
+        # ── Output order (15 outputs) ────────────────────────
         outputs = [
             price_html, decision_html,
             last_updated,
@@ -653,11 +721,41 @@ def build_ui() -> gr.Blocks:
             log_table,
             indicators_hidden,
             status_box,
+            trade_mode_status,
         ]
 
-        run_btn.click(fn=run_full_analysis, inputs=[], outputs=outputs)
-        demo.load(fn=run_full_analysis, inputs=[], outputs=outputs)
-        gr.Timer(value=AUTO_REFRESH_SECONDS).tick(fn=run_full_analysis, inputs=[], outputs=outputs)
+        # ── Wire up refresh button, page load, and timer ─────
+        # All three read trade_mode_toggle so the checkbox state
+        # is always respected — including during auto-refresh.
+        run_btn.click(
+            fn=run_full_analysis,
+            inputs=[trade_mode_toggle],
+            outputs=outputs,
+        )
+        demo.load(
+            fn=run_full_analysis,
+            inputs=[trade_mode_toggle],
+            outputs=outputs,
+        )
+
+        # Auto-refresh every 5 minutes — timer fires even when idle
+        try:
+            timer = gr.Timer(value=AUTO_REFRESH_SECONDS)
+            timer.tick(
+                fn=run_full_analysis,
+                inputs=[trade_mode_toggle],
+                outputs=outputs,
+            )
+        except Exception as e:
+            # Fallback: older Gradio builds — warn but don't crash
+            print(f"[dashboard] gr.Timer not available ({e}); auto-refresh disabled.")
+
+        # Toggle change instantly refreshes the banner + dims/lights decision
+        trade_mode_toggle.change(
+            fn=run_full_analysis,
+            inputs=[trade_mode_toggle],
+            outputs=outputs,
+        )
 
         # Reset portfolio
         def _reset():
