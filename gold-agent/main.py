@@ -2,9 +2,18 @@
 main.py
 Entry point for the Gold Trading Agent application.
 
-Wires together all modules:
+Implements the end-to-end architecture from Slide 22:
+  Data APIs → Math Engine → LLM Agent → Execution → Gradio UI
+
+Module pipeline:
   data.fetch → indicators.tech → news.sentiment →
   converter.thai → agent.claude_agent → risk.metrics → ui.dashboard
+
+Key design decisions from course slides:
+  - Deterministic pipeline (Slides 1-4): fetch, indicators, converter, risk
+  - Stochastic component (Slide 22):     claude_agent only
+  - Safety bounds (Slide 26):            validated in claude_agent before display
+  - AGENTS.md (Slide 17):               see AGENTS.md for AI-readable project rules
 
 Usage:
     python main.py
@@ -94,19 +103,25 @@ def run_cli_test():
         print(f"   ❌ News error: {e}")
 
     try:
-        print("\n4. Converting to THB...")
+        print("\n4. Converting to THB (Slide 21 — 96.5% Thai gold purity)...")
         from converter.thai import convert_to_thb
         thb = convert_to_thb(price)
-        print(f"   ✅ ฿{thb['thb_per_gram']:.2f}/g | ฿{thb['thb_per_baht_weight']:.2f}/baht-wt")
+        print(f"   ✅ ฿{thb['thb_per_gram']:.2f}/g (pure) | "
+              f"฿{thb['thb_per_baht_weight_thai']:.2f}/baht-wt (96.5% Thai)")
     except Exception as e:
         print(f"   ❌ Converter error: {e}")
 
     try:
-        print("\n5. Computing risk metrics...")
+        print("\n5. Computing risk metrics (Slides 28-30)...")
         from risk.metrics import calculate_risk
         risk = calculate_risk(df)
-        print(f"   ✅ Sharpe: {risk['sharpe']:.4f} | MaxDD: {risk['drawdown_pct']} | "
-              f"Kelly: {risk['kelly_pct']}")
+        ev = risk["ev"]
+        print(f"   ✅ Sharpe: {risk['sharpe']:.4f} ({risk['sharpe_label']}) | "
+              f"Sortino: {risk['sortino']:.4f} | "
+              f"MaxDD: {risk['drawdown_pct']}")
+        print(f"   ✅ Full Kelly: {risk['kelly_pct']} | "
+              f"Half-Kelly (recommended): {risk['half_kelly_pct']} | "
+              f"EV: {ev['ev_pct']} ({'Positive' if ev['is_positive'] else 'Negative'})")
     except Exception as e:
         print(f"   ❌ Risk metrics error: {e}")
 

@@ -2,22 +2,29 @@
 risk/metrics.py
 Risk management metrics for gold trading analysis.
 
-Calculates:
-  - Sharpe Ratio (annualized, 2% risk-free rate)
-  - Maximum Drawdown
-  - Kelly Criterion for position sizing
+Implements formulas directly from the course slides (TSE Data Science - LLM Agents):
+  - Sharpe Ratio          (Slide 28): E[Rp - rf] / sqrt(Var(Rp - rf))  × sqrt(252)
+  - Sortino Ratio         (Slide 28): E[Rp - τ]  / sqrt(E[min(0, Rp - τ)^2])
+  - Maximum Drawdown      (Slide 28): max over t of (max_τ Vτ - Vt) / max_τ Vτ
+  - Kelly Criterion       (Slide 30): f* = W - (1-W)/R   where R = avg_win/avg_loss
+  - Half-Kelly            (Slide 30): f*/2  (recommended for LLM agents — overconfidence)
+  - Expected Value (EV)   (Slide 29): EV = (W × R_W) - (L × R_L)
 """
 
 import numpy as np
 import pandas as pd
 
 
+# ─────────────────────────────────────────────────────────────
+# Sharpe Ratio  (Slide 28)
+# ─────────────────────────────────────────────────────────────
 def calculate_sharpe(df: pd.DataFrame, risk_free_rate: float = 0.02) -> float:
     """
     Calculate the annualized Sharpe Ratio from a price DataFrame.
 
-    Sharpe Ratio = (Mean Daily Return - Daily Risk-Free Rate) / Std of Daily Returns
-    Annualized by multiplying by sqrt(252) (trading days per year).
+    Formula (Slide 28):
+        S = E[Rp - rf] / sqrt(Var(Rp - rf))
+    Annualized by multiplying by sqrt(252) trading days.
 
     Args:
         df (pd.DataFrame): DataFrame with a 'Close' column.
@@ -31,16 +38,12 @@ def calculate_sharpe(df: pd.DataFrame, risk_free_rate: float = 0.02) -> float:
             return 0.0
 
         daily_returns = df["Close"].pct_change().dropna()
-
         if daily_returns.empty or daily_returns.std() == 0:
             return 0.0
 
-        # Convert annual rate to daily
         daily_rf = risk_free_rate / 252
-
         excess_returns = daily_returns - daily_rf
         sharpe = (excess_returns.mean() / excess_returns.std()) * np.sqrt(252)
-
         return round(float(sharpe), 4)
 
     except Exception as e:
@@ -48,49 +51,99 @@ def calculate_sharpe(df: pd.DataFrame, risk_free_rate: float = 0.02) -> float:
         return 0.0
 
 
+# ─────────────────────────────────────────────────────────────
+# Sortino Ratio  (Slide 28)
+# ─────────────────────────────────────────────────────────────
+def calculate_sortino(df: pd.DataFrame, target_return: float = 0.0) -> float:
+    """
+    Calculate the annualized Sortino Ratio.
+
+    Unlike Sharpe, Sortino penalizes ONLY downside volatility (Slide 28).
+
+    Formula:
+        Sortino = E[Rp - τ] / sqrt(E[min(0, Rp - τ)^2])
+    Annualized by multiplying by sqrt(252).
+
+    Args:
+        df (pd.DataFrame): DataFrame with a 'Close' column.
+        target_return (float): Minimum acceptable daily return (default 0.0).
+
+    Returns:
+        float: Annualized Sortino Ratio. Returns 0.0 on failure.
+    """
+    try:
+        if df.empty or "Close" not in df.columns or len(df) < 2:
+            return 0.0
+
+        daily_returns = df["Close"].pct_change().dropna()
+        if daily_returns.empty:
+            return 0.0
+
+        excess = daily_returns - target_return
+        # Downside deviation: only negative deviations count
+        downside = np.minimum(excess, 0.0)
+        downside_std = np.sqrt(np.mean(downside ** 2))
+
+        if downside_std == 0:
+            return 0.0
+
+        sortino = (excess.mean() / downside_std) * np.sqrt(252)
+        return round(float(sortino), 4)
+
+    except Exception as e:
+        print(f"[metrics.py] Error calculating Sortino Ratio: {e}")
+        return 0.0
+
+
+# ─────────────────────────────────────────────────────────────
+# Maximum Drawdown  (Slide 28)
+# ─────────────────────────────────────────────────────────────
 def calculate_max_drawdown(df: pd.DataFrame) -> float:
     """
-    Calculate the Maximum Drawdown from a price series.
+    Calculate the Maximum Drawdown (MDD) from a price series.
 
-    Max Drawdown = Maximum peak-to-trough decline over the period.
-    Expressed as a negative percentage (e.g., -0.15 = -15%).
+    Formula (Slide 28):
+        MDD = max over t of  (max_τ∈[0,t] Vτ  -  Vt)  /  max_τ∈[0,t] Vτ
+    Expressed as a negative fraction (e.g., -0.15 means a 15% peak-to-trough drop).
 
     Args:
         df (pd.DataFrame): DataFrame with a 'Close' column.
 
     Returns:
-        float: Maximum drawdown as a fraction (e.g., -0.15 for -15%).
-               Returns 0.0 on failure.
+        float: Maximum drawdown as a negative fraction. Returns 0.0 on failure.
     """
     try:
         if df.empty or "Close" not in df.columns or len(df) < 2:
             return 0.0
 
         close = df["Close"].copy()
-
-        # Rolling maximum (peak)
         rolling_max = close.cummax()
-
-        # Drawdown at each point = (price - peak) / peak
         drawdown = (close - rolling_max) / rolling_max
-
-        max_dd = float(drawdown.min())
-        return round(max_dd, 4)
+        return round(float(drawdown.min()), 4)
 
     except Exception as e:
         print(f"[metrics.py] Error calculating Max Drawdown: {e}")
         return 0.0
 
 
+# ─────────────────────────────────────────────────────────────
+# Kelly Criterion + Half-Kelly  (Slide 30)
+# ─────────────────────────────────────────────────────────────
 def calculate_kelly(df: pd.DataFrame, win_loss_ratio: float = None) -> float:
     """
-    Calculate the Kelly Criterion for optimal position sizing.
+    Calculate the Full Kelly Criterion for optimal position sizing.
 
-    Kelly % = (Win Rate * (Win/Loss Ratio + 1) - 1) / (Win/Loss Ratio)
-    Simplified: Kelly % = (bp - q) / b
-      where b = win/loss ratio, p = win probability, q = 1 - p
+    Formula (Slide 30):
+        f* = W  -  (1 - W) / R
+    where:
+        W = win rate (probability of a profitable day)
+        R = win/loss payout ratio (avg_win / avg_loss)
 
-    Uses daily returns to estimate win rate and average win/loss.
+    Note from Slide 30: "Because LLMs can be overconfident and market
+    distributions are non-stationary, quantitative systems typically use
+    Half-Kelly (f*/2) to reduce volatility and drawdown."
+
+    Use calculate_half_kelly() for the recommended position size.
     Kelly fraction is capped at 25% (0.25) as a safety measure.
 
     Args:
@@ -98,15 +151,13 @@ def calculate_kelly(df: pd.DataFrame, win_loss_ratio: float = None) -> float:
         win_loss_ratio (float, optional): Override the calculated win/loss ratio.
 
     Returns:
-        float: Recommended position size as a fraction of portfolio (0–0.25).
-               Returns 0.0 on failure.
+        float: Full Kelly fraction as a decimal (0.0 – 0.25).
     """
     try:
         if df.empty or "Close" not in df.columns or len(df) < 2:
             return 0.0
 
         daily_returns = df["Close"].pct_change().dropna()
-
         if daily_returns.empty:
             return 0.0
 
@@ -117,7 +168,6 @@ def calculate_kelly(df: pd.DataFrame, win_loss_ratio: float = None) -> float:
             return 0.0
 
         win_rate = len(wins) / len(daily_returns)
-        loss_rate = 1 - win_rate
 
         if win_loss_ratio is None:
             avg_win = wins.mean()
@@ -131,7 +181,8 @@ def calculate_kelly(df: pd.DataFrame, win_loss_ratio: float = None) -> float:
         if b <= 0:
             return 0.0
 
-        kelly = (win_rate * (b + 1) - 1) / b
+        # Kelly formula: f* = W - (1 - W) / R  (Slide 30)
+        kelly = win_rate - (1 - win_rate) / b
 
         # Cap at 25% for conservative risk management
         kelly = max(0.0, min(kelly, 0.25))
@@ -142,28 +193,145 @@ def calculate_kelly(df: pd.DataFrame, win_loss_ratio: float = None) -> float:
         return 0.0
 
 
-def calculate_risk(df: pd.DataFrame) -> dict:
+def calculate_half_kelly(df: pd.DataFrame) -> float:
     """
-    Calculate all risk metrics from the gold price DataFrame.
+    Calculate Half-Kelly position size — the recommended size for LLM agents.
+
+    From Slide 30: "quantitative systems typically use Half-Kelly (f*/2) to
+    reduce volatility and drawdown while maintaining strong growth."
+
+    This is the safer, production-recommended position size, because:
+    1. LLMs can be overconfident in their signal quality estimates.
+    2. Gold market distributions are non-stationary (macro events shift regimes).
+
+    Args:
+        df (pd.DataFrame): DataFrame with a 'Close' column.
+
+    Returns:
+        float: Half-Kelly position size as a decimal (0.0 – 0.125).
+    """
+    full_kelly = calculate_kelly(df)
+    return round(full_kelly / 2, 4)
+
+
+# ─────────────────────────────────────────────────────────────
+# Expected Value (EV) Analysis  (Slide 29)
+# ─────────────────────────────────────────────────────────────
+def calculate_expected_value(df: pd.DataFrame) -> dict:
+    """
+    Calculate the Expected Value (EV) of the trading strategy.
+
+    Formula (Slide 29):
+        EV = (W × R_W)  -  (L × R_L)
+    where:
+        W   = win rate (probability of profitable trade)
+        R_W = average profit per winning trade
+        L   = loss rate (1 - W)
+        R_L = average loss per losing trade
+
+    A positive EV means the strategy is mathematically profitable over time.
+    From Slide 29: "A well-designed system prompt can enforce a strict
+    risk-reward ratio (e.g., R_W = 3 × R_L), allowing the strategy to
+    remain profitable even with a win rate below 50%."
 
     Args:
         df (pd.DataFrame): DataFrame with a 'Close' column.
 
     Returns:
         dict: {
-            'sharpe'       : float,  # Annualized Sharpe Ratio
-            'max_drawdown' : float,  # Maximum Drawdown (negative fraction)
-            'kelly'        : float,  # Kelly Criterion position size (0–0.25)
-            'sharpe_label' : str,    # Human-readable Sharpe interpretation
-            'drawdown_pct' : str,    # Max drawdown as percentage string
-            'kelly_pct'    : str,    # Kelly as percentage string
+            'ev'          : float,  # Expected value per trade (fraction)
+            'win_rate'    : float,  # Win probability (0–1)
+            'loss_rate'   : float,  # Loss probability (0–1)
+            'avg_win'     : float,  # Average win magnitude
+            'avg_loss'    : float,  # Average loss magnitude
+            'reward_ratio': float,  # R_W / R_L  (risk-reward ratio)
+            'ev_pct'      : str,    # EV formatted as percentage string
+            'is_positive' : bool,   # True if EV > 0 (profitable strategy)
+        }
+    """
+    default = {
+        "ev": 0.0, "win_rate": 0.0, "loss_rate": 0.0,
+        "avg_win": 0.0, "avg_loss": 0.0, "reward_ratio": 0.0,
+        "ev_pct": "0.00%", "is_positive": False,
+    }
+
+    try:
+        if df.empty or "Close" not in df.columns or len(df) < 2:
+            return default
+
+        daily_returns = df["Close"].pct_change().dropna()
+        if daily_returns.empty:
+            return default
+
+        wins = daily_returns[daily_returns > 0]
+        losses = daily_returns[daily_returns < 0]
+
+        if len(wins) == 0 or len(losses) == 0:
+            return default
+
+        win_rate = len(wins) / len(daily_returns)
+        loss_rate = 1 - win_rate
+        avg_win = float(wins.mean())
+        avg_loss = float(abs(losses.mean()))
+        reward_ratio = round(avg_win / avg_loss, 4) if avg_loss > 0 else 0.0
+
+        # EV formula from Slide 29
+        ev = (win_rate * avg_win) - (loss_rate * avg_loss)
+
+        return {
+            "ev": round(ev, 6),
+            "win_rate": round(win_rate, 4),
+            "loss_rate": round(loss_rate, 4),
+            "avg_win": round(avg_win, 6),
+            "avg_loss": round(avg_loss, 6),
+            "reward_ratio": reward_ratio,
+            "ev_pct": f"{ev * 100:.4f}%",
+            "is_positive": ev > 0,
+        }
+
+    except Exception as e:
+        print(f"[metrics.py] Error calculating Expected Value: {e}")
+        return default
+
+
+# ─────────────────────────────────────────────────────────────
+# Master risk function (returns all metrics)
+# ─────────────────────────────────────────────────────────────
+def calculate_risk(df: pd.DataFrame) -> dict:
+    """
+    Calculate ALL risk metrics from the gold price DataFrame.
+
+    Aggregates: Sharpe, Sortino, Max Drawdown, Full Kelly,
+                Half-Kelly (recommended), and Expected Value.
+
+    Half-Kelly is the recommended position size per Slide 30.
+
+    Args:
+        df (pd.DataFrame): DataFrame with a 'Close' column.
+
+    Returns:
+        dict: {
+            'sharpe'          : float,  # Annualized Sharpe Ratio
+            'sortino'         : float,  # Annualized Sortino Ratio (downside only)
+            'max_drawdown'    : float,  # Max Drawdown (negative fraction)
+            'kelly'           : float,  # Full Kelly fraction
+            'half_kelly'      : float,  # Half-Kelly (RECOMMENDED for LLM agents)
+            'ev'              : dict,   # Full Expected Value breakdown
+            'sharpe_label'    : str,    # Human-readable Sharpe interpretation
+            'sortino_label'   : str,    # Human-readable Sortino interpretation
+            'drawdown_pct'    : str,    # Max drawdown as percentage string
+            'kelly_pct'       : str,    # Full Kelly as percentage string
+            'half_kelly_pct'  : str,    # Half-Kelly as percentage string (recommended)
         }
     """
     sharpe = calculate_sharpe(df)
+    sortino = calculate_sortino(df)
     max_dd = calculate_max_drawdown(df)
     kelly = calculate_kelly(df)
+    half_kelly = calculate_half_kelly(df)
+    ev = calculate_expected_value(df)
 
-    # Interpret Sharpe
+    # Sharpe label interpretation
     if sharpe >= 2.0:
         sharpe_label = "Excellent"
     elif sharpe >= 1.0:
@@ -175,21 +343,46 @@ def calculate_risk(df: pd.DataFrame) -> dict:
     else:
         sharpe_label = "Negative"
 
+    # Sortino label interpretation (same scale as Sharpe)
+    if sortino >= 2.0:
+        sortino_label = "Excellent"
+    elif sortino >= 1.0:
+        sortino_label = "Good"
+    elif sortino >= 0.5:
+        sortino_label = "Acceptable"
+    elif sortino >= 0.0:
+        sortino_label = "Poor"
+    else:
+        sortino_label = "Negative"
+
     result = {
         "sharpe": sharpe,
+        "sortino": sortino,
         "max_drawdown": max_dd,
         "kelly": kelly,
+        "half_kelly": half_kelly,
+        "ev": ev,
         "sharpe_label": sharpe_label,
+        "sortino_label": sortino_label,
         "drawdown_pct": f"{max_dd * 100:.2f}%",
         "kelly_pct": f"{kelly * 100:.2f}%",
+        "half_kelly_pct": f"{half_kelly * 100:.2f}%",
     }
 
-    print(f"[metrics.py] Sharpe={sharpe:.4f} ({sharpe_label}), "
-          f"MaxDD={result['drawdown_pct']}, Kelly={result['kelly_pct']}")
+    print(
+        f"[metrics.py] Sharpe={sharpe:.4f} ({sharpe_label}) | "
+        f"Sortino={sortino:.4f} ({sortino_label}) | "
+        f"MaxDD={result['drawdown_pct']} | "
+        f"Full Kelly={result['kelly_pct']} | "
+        f"Half-Kelly={result['half_kelly_pct']} (recommended) | "
+        f"EV={ev['ev_pct']} ({'Positive' if ev['is_positive'] else 'Negative'})"
+    )
     return result
 
 
-# Allow standalone testing
+# ─────────────────────────────────────────────────────────────
+# Standalone testing
+# ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import sys
     import os
@@ -199,7 +392,17 @@ if __name__ == "__main__":
     df = get_gold_price()
     if not df.empty:
         metrics = calculate_risk(df)
-        print("\n--- Risk Metrics ---")
-        print(f"Sharpe Ratio  : {metrics['sharpe']} ({metrics['sharpe_label']})")
-        print(f"Max Drawdown  : {metrics['drawdown_pct']}")
-        print(f"Kelly Criterion: {metrics['kelly_pct']} of portfolio")
+        ev = metrics["ev"]
+        print("\n--- Risk Metrics (from Slide 28-30) ---")
+        print(f"Sharpe Ratio (Slide 28) : {metrics['sharpe']}  ({metrics['sharpe_label']})")
+        print(f"Sortino Ratio (Slide 28): {metrics['sortino']}  ({metrics['sortino_label']})")
+        print(f"Max Drawdown (Slide 28) : {metrics['drawdown_pct']}")
+        print(f"Full Kelly (Slide 30)   : {metrics['kelly_pct']} of portfolio")
+        print(f"Half-Kelly RECOMMENDED  : {metrics['half_kelly_pct']} of portfolio ← use this")
+        print(f"\n--- Expected Value (Slide 29) ---")
+        print(f"Win Rate               : {ev['win_rate']*100:.1f}%")
+        print(f"Loss Rate              : {ev['loss_rate']*100:.1f}%")
+        print(f"Avg Win                : {ev['avg_win']*100:.4f}%")
+        print(f"Avg Loss               : {ev['avg_loss']*100:.4f}%")
+        print(f"Reward Ratio (RW/RL)   : {ev['reward_ratio']:.2f}x")
+        print(f"Expected Value (EV)    : {ev['ev_pct']}  ({'✅ Positive' if ev['is_positive'] else '❌ Negative'})")
