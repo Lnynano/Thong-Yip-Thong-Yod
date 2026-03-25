@@ -2,18 +2,18 @@
 main.py
 Entry point for the Gold Trading Agent application.
 
-Implements the end-to-end architecture from Slide 22:
+End-to-end architecture:
   Data APIs → Math Engine → LLM Agent → Execution → Gradio UI
 
 Module pipeline:
   data.fetch → indicators.tech → news.sentiment →
   converter.thai → agent.claude_agent → risk.metrics → ui.dashboard
 
-Key design decisions from course slides:
-  - Deterministic pipeline (Slides 1-4): fetch, indicators, converter, risk
-  - Stochastic component (Slide 22):     claude_agent only
-  - Safety bounds (Slide 26):            validated in claude_agent before display
-  - AGENTS.md (Slide 17):               see AGENTS.md for AI-readable project rules
+Key design decisions:
+  - Deterministic pipeline : fetch, indicators, converter, risk
+  - Stochastic component   : claude_agent only
+  - Safety bounds          : validated in claude_agent before display
+  - AGENTS.md              : see AGENTS.md for AI-readable project rules
 
 Usage:
     python main.py
@@ -103,7 +103,7 @@ def run_cli_test():
         print(f"   ❌ News error: {e}")
 
     try:
-        print("\n4. Converting to THB (Slide 21 — 96.5% Thai gold purity)...")
+        print("\n4. Converting to THB (96.5% Thai gold purity)...")
         from converter.thai import convert_to_thb
         thb = convert_to_thb(price)
         print(f"   ✅ ฿{thb['thb_per_gram']:.2f}/g (pure) | "
@@ -112,7 +112,7 @@ def run_cli_test():
         print(f"   ❌ Converter error: {e}")
 
     try:
-        print("\n5. Computing risk metrics (Slides 28-30)...")
+        print("\n5. Computing risk metrics...")
         from risk.metrics import calculate_risk
         risk = calculate_risk(df)
         ev = risk["ev"]

@@ -2,16 +2,16 @@
 ui/dashboard.py
 Gradio-based interactive dashboard for the Gold Trading Agent.
 
-Implements the production monitoring requirements from Slide 32:
+Production monitoring features:
   "Production trading agents require real-time monitoring dashboards to track
    reasoning traces, portfolio state, and risk metrics."
 
-  - Live Reasoning Traces : Log LLM's thought process (Slide 32)
-  - Portfolio Telemetry   : Real-time price + Thai Baht conversion (Slide 21)
-  - Risk Metrics          : Sharpe, Sortino, MDD, Kelly, Half-Kelly (Slides 28-30)
-  - Expected Value Panel  : Win rate, EV analysis (Slide 29)
-  - Bollinger Bands       : Added to indicator panel (Slide 23)
-  - 96.5% Purity pricing  : Thai gold at correct purity (Slide 21)
+  - Live Reasoning Traces : Log LLM's thought process
+  - Portfolio Telemetry   : Real-time price + Thai Baht conversion
+  - Risk Metrics          : Sharpe, Sortino, MDD, Kelly, Half-Kelly
+  - Expected Value Panel  : Win rate, EV analysis
+  - Bollinger Bands       : Added to indicator panel
+  - 96.5% Purity pricing  : Thai gold at correct purity
 """
 
 import sys
@@ -26,7 +26,7 @@ def run_full_analysis() -> tuple:
     """
     Execute the complete gold analysis pipeline and return all data for the UI.
 
-    Pipeline (Slide 22 architecture):
+    Pipeline:
         Data APIs → Math Engine → LLM Agent → Execution → Gradio UI
 
     Returns:
@@ -67,17 +67,17 @@ def run_full_analysis() -> tuple:
         news_text = "\n".join(f"{i+1}. {h}" for i, h in enumerate(headlines))
         news_text += f"\n\nOverall Sentiment: {sentiment}"
 
-        # ── 4. THB conversion (Slide 21: 96.5% purity) ─────────────────────
+        # ── 4. THB conversion (96.5% purity) ─────────────────────
         from converter.thai import convert_to_thb, format_thb
         thb_data = convert_to_thb(current_price)
         price_usd     = f"${current_price:,.2f} / troy oz"
         price_thb_gram = format_thb(thb_data["thb_per_gram"]) + " / gram  (100% pure)"
         price_thb_bw   = (
             f"{format_thb(thb_data['thb_per_baht_weight_thai'])} / baht-weight  "
-            f"(96.5% Thai gold, Slide 21)"
+            f"(96.5% Thai gold)"
         )
 
-        # ── 5. Risk metrics (Slides 28-30) ──────────────────────────────────
+        # ── 5. Risk metrics ──────────────────────────────────
         from risk.metrics import calculate_risk
         risk = calculate_risk(df)
         ev   = risk["ev"]
@@ -107,7 +107,7 @@ def run_full_analysis() -> tuple:
         factors_text   = "\n".join(f"• {f}" for f in key_factors) if key_factors else "No factors listed."
         risk_note_text = f"⚠️ Risk: {risk_note}" if risk_note else ""
 
-        # Format ReAct trace for display (Slide 32: Live Reasoning Traces)
+        # Format ReAct trace for display
         trace_text = "\n".join(agent_trace) if agent_trace else "No trace available (run agent to see)."
 
         status = f"✅ Analysis complete — Decision: {decision} ({confidence}% confidence)"
@@ -147,7 +147,7 @@ def _decision_badge(decision: str, confidence: int = 0) -> str:
     """
     Generate an HTML-styled badge for the trading decision.
 
-    Per Slide 32: Decisions are color-coded for instant visual clarity.
+    Decisions are color-coded for instant visual clarity.
         BUY  → green  (bullish signal)
         SELL → red    (bearish signal)
         HOLD → yellow (mixed / uncertain)
@@ -187,20 +187,20 @@ def build_ui() -> gr.Blocks:
     """
     Build and return the Gradio Blocks dashboard layout.
 
-    Layout based on Slide 32 production monitoring requirements:
+    Layout:
       - Real-time price panel (USD + THB with 96.5% Thai gold purity)
       - Technical indicators (RSI + MACD + Bollinger Bands)
       - Claude decision badge (BUY/SELL/HOLD, color-coded)
       - Reasoning + key factors + risk note
       - Risk metrics (Sharpe, Sortino, MDD, Kelly, Half-Kelly, EV)
       - News headlines with sentiment
-      - Live ReAct agent trace log (Slide 32)
+      - Live ReAct agent trace log
 
     Returns:
         gr.Blocks: The configured Gradio application instance.
     """
     with gr.Blocks(
-        title="Gold Trading Agent 🥇 — TSE Data Science",
+        title="Gold Trading Agent 🥇",
         theme=gr.themes.Soft(),
         css="""
             .header-text { text-align: center; }
@@ -214,8 +214,7 @@ def build_ui() -> gr.Blocks:
         gr.Markdown(
             """
             # 🥇 Gold Trading Agent
-            ### AI-Powered Analysis · Claude ReAct Loop · TSE Data Science Course
-            *Implements: ReAct (Slide 7) · Structured State (Slide 9) · Risk Metrics (Slides 28-30) · Thai Gold 96.5% Purity (Slide 21)*
+            ### AI-Powered Analysis · Claude ReAct Loop
 
             Click **▶ Run Analysis** to start the full pipeline.
             """,
@@ -233,27 +232,27 @@ def build_ui() -> gr.Blocks:
             )
 
         # ── Price Panel ─────────────────────────────────────────────────────
-        gr.Markdown("## 💰 Live Gold Price  *(Slide 21 — Thai Gold Purity 96.5%)*")
+        gr.Markdown("## 💰 Live Gold Price  *(Thai Gold Purity 96.5%)*")
         with gr.Row():
             price_usd      = gr.Textbox(label="USD (per troy oz)", interactive=False)
             price_thb_gram = gr.Textbox(label="THB (per gram, 100% pure)", interactive=False)
             price_thb_bw   = gr.Textbox(label="THB (per baht-weight, 96.5% Thai gold)", interactive=False)
 
         # ── Technical Indicators ─────────────────────────────────────────────
-        gr.Markdown("## 📊 Technical Indicators  *(Slide 23 — Pre-computed deterministically)*")
+        gr.Markdown("## 📊 Technical Indicators  *(Pre-computed deterministically)*")
         with gr.Row():
             rsi_box  = gr.Textbox(label="RSI (14-period)", interactive=False)
             macd_box = gr.Textbox(label="MACD (EMA12 - EMA26, Signal=EMA9)", interactive=False)
         bb_box = gr.Textbox(label="Bollinger Bands (period=20, ±2σ)", interactive=False)
 
         # ── Claude Decision ─────────────────────────────────────────────────
-        gr.Markdown("## 🤖 Claude's Recommendation  *(Slides 7-11 — ReAct + Safety Bounds)*")
+        gr.Markdown("## 🤖 Claude's Recommendation  *(ReAct + Safety Bounds)*")
         decision_html = gr.HTML(value=_decision_badge("HOLD"))
 
         # ── Reasoning, Key Factors, Risk Note ────────────────────────────────
         with gr.Row():
             with gr.Column(scale=2):
-                gr.Markdown("### 💬 Claude's Reasoning  *(Slide 24 — Math + Macro synthesis)*")
+                gr.Markdown("### 💬 Claude's Reasoning  *(Math + Macro synthesis)*")
                 reasoning_box = gr.Textbox(
                     label="",
                     value="Run analysis to see Claude's reasoning.",
@@ -265,29 +264,29 @@ def build_ui() -> gr.Blocks:
                 factors_box = gr.Textbox(label="", value="", lines=4, interactive=False)
 
         risk_note_box = gr.Textbox(
-            label="⚠️ Risk Note  (Slide 26 — Safety Bounds)",
+            label="⚠️ Risk Note  (Safety Bounds)",
             value="",
             interactive=False,
         )
 
         # ── Risk Metrics ─────────────────────────────────────────────────────
-        gr.Markdown("## ⚖️ Risk Metrics  *(Slides 28-30 — Sharpe · Sortino · MDD · Kelly · EV)*")
+        gr.Markdown("## ⚖️ Risk Metrics  *(Sharpe · Sortino · MDD · Kelly · EV)*")
         with gr.Row():
-            sharpe_box   = gr.Textbox(label="Sharpe Ratio (Slide 28)", interactive=False)
-            sortino_box  = gr.Textbox(label="Sortino Ratio (Slide 28, downside only)", interactive=False)
-            drawdown_box = gr.Textbox(label="Max Drawdown (Slide 28)", interactive=False)
+            sharpe_box   = gr.Textbox(label="Sharpe Ratio", interactive=False)
+            sortino_box  = gr.Textbox(label="Sortino Ratio (downside only)", interactive=False)
+            drawdown_box = gr.Textbox(label="Max Drawdown", interactive=False)
         with gr.Row():
             kelly_box = gr.Textbox(
-                label="Kelly Criterion  (Slide 30) — Half-Kelly recommended for LLM agents",
+                label="Kelly Criterion — Half-Kelly recommended for LLM agents",
                 interactive=False,
             )
             ev_box = gr.Textbox(
-                label="Expected Value Analysis  (Slide 29 — EV = W×R_W - L×R_L)",
+                label="Expected Value Analysis  (EV = W×R_W - L×R_L)",
                 interactive=False,
             )
 
         # ── News Headlines ───────────────────────────────────────────────────
-        gr.Markdown("## 📰 Latest Gold News  *(Slide 24 — The LLM Advantage: macro catalysts)*")
+        gr.Markdown("## 📰 Latest Gold News  *(The LLM Advantage: macro catalysts)*")
         news_box = gr.Textbox(
             label="",
             value="News will appear after analysis.",
@@ -295,9 +294,9 @@ def build_ui() -> gr.Blocks:
             interactive=False,
         )
 
-        # ── ReAct Agent Trace (Slide 32) ─────────────────────────────────────
+        # ── ReAct Agent Trace ─────────────────────────────────────
         gr.Markdown(
-            "## 🔍 ReAct Agent Trace  *(Slide 32 — Live Reasoning Traces)*  "
+            "## 🔍 ReAct Agent Trace  *(Live Reasoning Traces)*  "
             "<span class='slide-ref'>τ = (s₀, t₁, a₁, o₁, ..., aₙ, oₙ)</span>"
         )
         trace_box = gr.Textbox(
@@ -313,7 +312,7 @@ def build_ui() -> gr.Blocks:
             ---
             ⚠️ **Disclaimer**: This is a university project for educational purposes only.
             This is **NOT financial advice**. Always consult a licensed financial advisor.
-            Past performance does not guarantee future results. | Thammasat University — Data Science Course
+            Past performance does not guarantee future results.
             """,
             elem_classes="header-text"
         )
