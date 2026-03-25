@@ -12,6 +12,7 @@ Features:
   - Sentiment badge on news section
   - Clear API-key-missing message in UI
   - Kelly with plain-English context label
+  - Analysis log table (records every run to CSV)
 """
 
 import sys
@@ -268,6 +269,16 @@ def run_full_analysis() -> tuple:
         last_updated = f"Last updated: {fetch_time}  (auto-refreshes every 5 min)"
         status       = f"✅  {decision}  —  {confidence}% confidence  ·  fetched {fetch_time}"
 
+        # ── 8. Write to log ─────────────────────────────────────────────────
+        from logger.trade_log import log_analysis, get_recent_logs
+        log_analysis(
+            decision=decision, confidence=confidence,
+            price_usd=price_usd, price_thb=price_thb,
+            rsi=rsi_str, macd=macd_str,
+            sharpe=sharpe_str, reasoning=reasoning,
+        )
+        log_df = get_recent_logs(50)
+
         return (
             price_usd, price_thb,
             chart_fig,
@@ -278,6 +289,7 @@ def run_full_analysis() -> tuple:
             news_block,
             last_updated,
             status,
+            log_df,
         )
 
     except Exception as e:
@@ -287,7 +299,9 @@ def run_full_analysis() -> tuple:
 
 
 def _error_tuple(msg: str) -> tuple:
-    """Return safe defaults for all 13 outputs on error."""
+    """Return safe defaults for all 14 outputs on error."""
+    import pandas as pd
+    from logger.trade_log import get_recent_logs
     return (
         "N/A", "N/A",
         None,
@@ -298,6 +312,7 @@ def _error_tuple(msg: str) -> tuple:
         f"<div style='padding:12px;color:#721c24;'>{msg}</div>",
         "Last updated: —",
         msg,
+        get_recent_logs(50),
     )
 
 
@@ -381,13 +396,31 @@ def build_ui() -> gr.Blocks:
         gr.Markdown("## 📰 Gold News")
         news_box = gr.HTML(value="<div style='padding:12px;color:#888;'>Loading news...</div>")
 
+        gr.Markdown("---")
+
+        # ── Analysis Log ─────────────────────────────────────────────────────
+        gr.Markdown("## 📋 Analysis Log")
+        log_table = gr.Dataframe(
+            headers=["Timestamp", "Decision", "Confidence %", "Price USD",
+                     "Price THB (baht-wt)", "RSI", "MACD", "Sharpe", "Reasoning"],
+            label="",
+            interactive=False,
+            wrap=True,
+        )
+        with gr.Row():
+            clear_btn = gr.Button("🗑️  Clear Log", variant="secondary", scale=1)
+            gr.Markdown(
+                "*Every analysis run is saved here automatically.*",
+                elem_classes="small-note",
+            )
+
         # ── Disclaimer ───────────────────────────────────────────────────────
         gr.Markdown(
             "⚠️ *For educational purposes only — not financial advice.*",
             elem_classes="center",
         )
 
-        # ── Output list (13 total — order matches run_full_analysis return) ──
+        # ── Output list (14 total — order matches run_full_analysis return) ──
         outputs = [
             price_usd, price_thb,
             chart,
@@ -398,6 +431,7 @@ def build_ui() -> gr.Blocks:
             news_box,
             last_updated,
             status_box,
+            log_table,
         ]
 
         run_btn.click(fn=run_full_analysis, inputs=[], outputs=outputs)
@@ -405,6 +439,14 @@ def build_ui() -> gr.Blocks:
         gr.Timer(value=AUTO_REFRESH_SECONDS).tick(
             fn=run_full_analysis, inputs=[], outputs=outputs
         )
+
+        # Clear log button — wipes CSV then refreshes the table
+        def _clear_and_reload():
+            from logger.trade_log import clear_log, get_recent_logs
+            clear_log()
+            return get_recent_logs(50)
+
+        clear_btn.click(fn=_clear_and_reload, inputs=[], outputs=[log_table])
 
     return demo
 
