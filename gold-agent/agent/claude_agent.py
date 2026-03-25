@@ -2,16 +2,15 @@
 agent/claude_agent.py
 Claude-powered ReAct gold trading agent using Anthropic tool calling.
 
-Implements the exact architecture described in the course slides:
-
-  Slide 7  — ReAct trajectory: τ = (s₀, t₁, a₁, o₁, t₂, a₂, o₂, ..., aₙ, oₙ)
-  Slide 9  — Structured state representation (markdown tables, not free-form prose)
-  Slide 10 — Progressive disclosure: global state first, then targeted details
-  Slide 11 — Template-driven system prompt: ROLE / CONSTRAINTS / STATE / OUTPUT
-  Slide 25 — System prompt with hard constraints (max drawdown 5%, position 10%)
-  Slide 26 — Execution router with safety bounds validation
-  Slide 31 — temperature=0 for consistent JSON tool calling (τ→0 = near-deterministic)
-  Slide 33 — JSON retry logic, infinite loop guard, arithmetic hallucination prevention
+Architecture:
+  - ReAct trajectory: τ = (s₀, t₁, a₁, o₁, t₂, a₂, o₂, ..., aₙ, oₙ)
+  - Structured state representation (markdown tables, not free-form prose)
+  - Progressive disclosure: global state first, then targeted details
+  - Template-driven system prompt: ROLE / CONSTRAINTS / STATE / OUTPUT
+  - System prompt with hard constraints (max drawdown 5%, position 10%)
+  - Execution router with safety bounds validation
+  - temperature=0 for consistent JSON tool calling (τ→0 = near-deterministic)
+  - JSON retry logic, infinite loop guard, arithmetic hallucination prevention
 
 Model: claude-sonnet-4-20250514
 """
@@ -24,7 +23,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ─────────────────────────────────────────────────────────────
-# System Prompt — Slide 25 template structure
+# System Prompt — template structure
 # ROLE / CONSTRAINTS / INSTRUCTIONS / OUTPUT FORMAT
 # ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """# ROLE
@@ -32,27 +31,27 @@ You are an institutional quantitative trading agent specializing in Gold (XAUUSD
 You combine mathematical technical indicators with macroeconomic news sentiment.
 Your analysis is used by Thai retail investors, so you also consider Thai Baht pricing.
 
-# CONSTRAINTS (HARD LIMITS — from Slide 25-26)
+# CONSTRAINTS (HARD LIMITS)
 1. Maximum drawdown limit    : 5% of portfolio value per trade
 2. Maximum position size     : 10% of capital per trade
 3. Only issue BUY when macro sentiment ALIGNS with momentum indicators
 4. Pre-computed indicators are authoritative — NEVER re-calculate math yourself
 5. You must call all three tools (get_price, get_indicators, get_news) before deciding
 
-# ANALYSIS PROCESS (ReAct loop — Slide 7)
+# ANALYSIS PROCESS (ReAct loop)
 Step 1 [OBSERVE s₀]: Market state is injected via tool results
 Step 2 [THINK  t₁]:  Reason about what data you need
 Step 3 [ACT    a₁]:  Call get_price → get_indicators → get_news (progressive disclosure)
 Step 4 [OBSERVE o₁]: Review each tool result carefully
 Step 5 [DECIDE    ]: Synthesize math + news → output final JSON
 
-# THE LLM ADVANTAGE (Slide 24)
+# THE LLM ADVANTAGE
 Traditional algorithms are great at math (RSI, MACD).
 But Gold is heavily driven by Macroeconomic News (Fed rates, inflation, war).
 You are the only system capable of reading a news headline, understanding its
 geopolitical impact, and combining it with mathematical indicators.
 
-Example (Slide 24): If RSI=75 (overbought) BUT news says "Fed cuts rates by 50bps"
+Example: If RSI=75 (overbought) BUT news says "Fed cuts rates by 50bps"
 → Override the overbought signal and BUY, because rate cuts are massively bullish for Gold.
 
 # DECISION CRITERIA
@@ -62,7 +61,7 @@ Example (Slide 24): If RSI=75 (overbought) BUT news says "Fed cuts rates by 50bp
          Confidence > 60% required
 - HOLD : Mixed signals, RSI 40-65, contradicting indicators, low news conviction
 
-# OUTPUT FORMAT (Slide 11 — machine-readable JSON only)
+# OUTPUT FORMAT (machine-readable JSON only)
 After calling all tools, respond with ONLY this JSON (no other text):
 {
   "decision"    : "BUY" | "SELL" | "HOLD",
@@ -74,7 +73,7 @@ After calling all tools, respond with ONLY this JSON (no other text):
 
 
 # ─────────────────────────────────────────────────────────────
-# Tool Definitions — Slide 13 (function calling interface contract)
+# Tool Definitions — function calling interface contract
 # ─────────────────────────────────────────────────────────────
 TOOLS = [
     {
@@ -82,7 +81,7 @@ TOOLS = [
         "description": (
             "Retrieves the current XAUUSD (gold futures) price in USD per troy ounce "
             "and a recent OHLCV summary table. Call this FIRST to establish market context. "
-            "Returns structured markdown-style data per Slide 9."
+            "Returns structured markdown-style data."
         ),
         "input_schema": {
             "type": "object",
@@ -101,7 +100,7 @@ TOOLS = [
         "description": (
             "Returns pre-computed technical indicators (RSI, MACD, Bollinger Bands). "
             "All values are deterministically calculated from 90 days of price data. "
-            "Per Slide 23: NEVER re-calculate these yourself — use these values as authoritative. "
+            "NEVER re-calculate these yourself — use these values as authoritative. "
             "RSI > 70 = overbought, RSI < 30 = oversold. "
             "Positive MACD histogram = bullish momentum."
         ),
@@ -115,7 +114,7 @@ TOOLS = [
         "name": "get_news",
         "description": (
             "Fetches the 5 most recent gold market news headlines with overall sentiment. "
-            "THIS IS YOUR SUPERPOWER (Slide 24): combine this news with mathematical "
+            "THIS IS YOUR SUPERPOWER: combine this news with mathematical "
             "indicators. A single macro event (Fed rate cut, war escalation) can override "
             "all technical signals. Always check news before deciding."
         ),
@@ -140,10 +139,10 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
     """
     Execute a tool call and return a structured JSON string result.
 
-    Per Slide 23: All numerical calculations happen here (deterministically),
+    All numerical calculations happen here (deterministically),
     never inside the LLM. The LLM only reasons about pre-computed values.
 
-    Per Slide 9: Returns structured markdown-table-style state for the LLM.
+    Returns structured markdown-table-style state for the LLM.
 
     Args:
         tool_name (str): Name of the tool to execute ('get_price', 'get_indicators', 'get_news').
@@ -174,7 +173,7 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
                 / recent["Close"].iloc[0] * 100, 2
             )
 
-            # Structured state per Slide 9 (markdown-friendly)
+            # Structured state (markdown-friendly)
             result = {
                 "asset": "XAUUSD (Gold Futures)",
                 "current_price_usd": round(current_price, 2),
@@ -206,7 +205,7 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
             rsi_signal  = "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else "NEUTRAL"
             macd_signal = "BULLISH" if macd["histogram"] > 0 else "BEARISH"
 
-            # Structured state per Slide 9 & 23
+            # Structured state
             result = {
                 "note": "All values are pre-computed deterministically. Do NOT recalculate.",
                 "rsi": {
@@ -242,9 +241,9 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
             headlines = get_gold_news(count)
             sentiment = get_sentiment_summary(headlines)
 
-            # Structured news per Slide 16 (Day in Life Part 2)
+            # Structured news
             result = {
-                "note": "Use these headlines to identify macro catalysts (Slide 24: The LLM Advantage)",
+                "note": "Use these headlines to identify macro catalysts (The LLM Advantage)",
                 "headlines": headlines,
                 "count": len(headlines),
                 "overall_sentiment": sentiment,
@@ -261,15 +260,14 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
-# Safety Bounds Validator  (Slide 26)
+# Safety Bounds Validator
 # ─────────────────────────────────────────────────────────────
 def _validate_decision(decision: dict) -> dict:
     """
     Validate the agent's output against hard-coded safety constraints.
 
-    From Slide 26 (Execution Engine and Safety Bounds):
-        "Once the LLM outputs a tool call, the execution layer validates it
-         against hard-coded constraints before interacting with external systems."
+    "Once the LLM outputs a tool call, the execution layer validates it
+     against hard-coded constraints before interacting with external systems."
 
     Safety checks:
         1. Decision must be BUY, SELL, or HOLD
@@ -295,7 +293,7 @@ def _validate_decision(decision: dict) -> dict:
     confidence = int(decision.get("confidence", 50))
     confidence = max(0, min(100, confidence))
 
-    # Safety check 3: Low confidence → HOLD (Slide 26 principle)
+    # Safety check 3: Low confidence → HOLD
     if confidence < 40 and raw_decision != "HOLD":
         print(f"[claude_agent.py] Low confidence {confidence}% → forcing HOLD")
         raw_decision = "HOLD"
@@ -315,15 +313,14 @@ def _validate_decision(decision: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# JSON Parser with Retry  (Slide 33)
+# JSON Parser with Retry
 # ─────────────────────────────────────────────────────────────
 def _parse_json_with_retry(text: str, attempt: int = 1) -> dict | None:
     """
     Parse JSON from Claude's response with fallback strategies.
 
-    From Slide 33 (Common Pitfalls):
-        "JSON parsing failures: The LLM outputs malformed JSON.
-         Solution: Use robust parsing with retry logic and error feedback."
+    "JSON parsing failures: The LLM outputs malformed JSON.
+     Solution: Use robust parsing with retry logic and error feedback."
 
     Strategy:
         1. Find the outermost { } block
@@ -360,21 +357,21 @@ def _parse_json_with_retry(text: str, attempt: int = 1) -> dict | None:
 
 
 # ─────────────────────────────────────────────────────────────
-# Main Agent Function  (ReAct loop — Slide 7)
+# Main Agent Function  (ReAct loop)
 # ─────────────────────────────────────────────────────────────
 def run_agent() -> dict:
     """
     Run the Claude gold trading ReAct agent.
 
-    Implements the full ReAct trajectory from Slide 7:
+    Implements the full ReAct trajectory:
         τ = (s₀, t₁, a₁, o₁, t₂, a₂, o₂, ..., aₙ, oₙ)
 
-    Key design decisions from slides:
-        - temperature=0.0  : τ→0 for near-deterministic JSON (Slide 31)
-        - top_p=0.1        : Nucleus sampling p=0.1 for tool calling (Slide 31)
-        - max_iterations=8 : Hard loop guard (Slide 33: infinite loop prevention)
-        - JSON retry logic  : Slide 33: robust parsing
-        - Safety validation : Slide 26: execution router
+    Key design decisions:
+        - temperature=0.0  : τ→0 for near-deterministic JSON
+        - top_p=0.1        : Nucleus sampling p=0.1 for tool calling
+        - max_iterations=8 : Hard loop guard (infinite loop prevention)
+        - JSON retry logic  : robust parsing
+        - Safety validation : execution router
 
     Returns:
         dict: {
@@ -384,7 +381,7 @@ def run_agent() -> dict:
             'key_factors' : list,  # List of key factors considered
             'risk_note'   : str,   # Main risk to this call
             'raw_response': str,   # Full raw text from Claude
-            'agent_trace' : list,  # Full ReAct trajectory log (Slide 32)
+            'agent_trace' : list,  # Full ReAct trajectory log
         }
     """
     default_result = {
@@ -403,35 +400,35 @@ def run_agent() -> dict:
         default_result["reasoning"] = "ANTHROPIC_API_KEY not configured. Set it in your .env file."
         return default_result
 
-    # ReAct trajectory log (Slide 32: Live Reasoning Traces)
+    # ReAct trajectory log
     agent_trace = []
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
 
-        # Initial user message with structured state per Slide 10
+        # Initial user message with structured state
         # (Progressive disclosure: global view first, then targeted detail via tools)
         messages = [
             {
                 "role": "user",
                 "content": (
                     "Analyze the current gold (XAUUSD) market and provide a trading recommendation.\n\n"
-                    "## YOUR TASK (ReAct loop — Slide 7)\n"
+                    "## YOUR TASK (ReAct loop)\n"
                     "1. Call get_price     → establish current market state (s₀)\n"
                     "2. Call get_indicators → get pre-computed math (RSI, MACD, BB)\n"
                     "3. Call get_news      → identify macro catalysts (your superpower)\n"
                     "4. Synthesize all data → output final JSON decision\n\n"
-                    "Remember (Slide 24): If news contradicts math signals, "
+                    "Remember: If news contradicts math signals, "
                     "macro events usually dominate for Gold.\n\n"
                     "Respond ONLY with the JSON object specified in your system prompt."
                 ),
             }
         ]
 
-        print("[claude_agent.py] Starting ReAct agent loop (Slide 7)...")
+        print("[claude_agent.py] Starting ReAct agent loop...")
         agent_trace.append("[AGENT STARTED] ReAct trajectory τ begins")
 
-        # ── Hard max iterations guard (Slide 33) ────────────────────────────
+        # ── Hard max iterations guard ────────────────────────────
         max_iterations = 8
         iteration = 0
 
@@ -439,12 +436,12 @@ def run_agent() -> dict:
             iteration += 1
             print(f"[claude_agent.py] Iteration {iteration}/{max_iterations}")
 
-            # temperature=0 and top_p=0.1 for consistent JSON (Slide 31)
+            # temperature=0 and top_p=0.1 for consistent JSON
             response = client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=4096,
-                temperature=0,          # τ→0: near-deterministic (Slide 31)
-                top_p=0.1,              # Nucleus p=0.1: limit to high-prob tokens (Slide 31)
+                temperature=0,          # τ→0: near-deterministic
+                top_p=0.1,              # Nucleus p=0.1: limit to high-prob tokens
                 system=SYSTEM_PROMPT,
                 tools=TOOLS,
                 messages=messages,
@@ -463,7 +460,7 @@ def run_agent() -> dict:
                 print("[claude_agent.py] Agent finished. Parsing response...")
                 agent_trace.append("[AGENT DECIDED] Final JSON response received")
 
-                # JSON parse with retry (Slide 33)
+                # JSON parse with retry
                 parsed = _parse_json_with_retry(final_text, attempt=1)
                 if parsed is None:
                     print("[claude_agent.py] JSON parse failed after retry.")
@@ -471,13 +468,13 @@ def run_agent() -> dict:
                     default_result["agent_trace"] = agent_trace
                     return default_result
 
-                # Safety bounds validation (Slide 26)
+                # Safety bounds validation
                 validated = _validate_decision(parsed)
                 validated["raw_response"] = final_text
                 validated["agent_trace"] = agent_trace
                 return validated
 
-            # ── Tool use: execute and feed back (Slides 8, 16) ──────────────
+            # ── Tool use: execute and feed back ──────────────
             elif response.stop_reason == "tool_use":
                 tool_results = []
 
@@ -489,12 +486,12 @@ def run_agent() -> dict:
 
                         print(f"[claude_agent.py] TOOL CALL: {tool_name} | input={tool_input}")
 
-                        # Slide 7: aₖ → environment → oₖ
+                        # ReAct: aₖ → environment → oₖ
                         result = _execute_tool(tool_name, tool_input)
                         result_preview = result[:150] + "..." if len(result) > 150 else result
                         print(f"[claude_agent.py] OBSERVATION: {result_preview}")
 
-                        # Log to ReAct trace (Slide 32: Live Reasoning Traces)
+                        # Log to ReAct trace
                         agent_trace.append(
                             f"[ACTION] Tool={tool_name} | "
                             f"[OBSERVATION] {result_preview}"
@@ -506,7 +503,7 @@ def run_agent() -> dict:
                             "content"    : result,
                         })
 
-                # Feed observations back into context (Slide 7: oₖ → cₖ₊₁)
+                # Feed observations back into context (oₖ → cₖ₊₁)
                 messages.append({"role": "user", "content": tool_results})
 
             else:
@@ -514,7 +511,7 @@ def run_agent() -> dict:
                 agent_trace.append(f"[WARNING] Unexpected stop: {response.stop_reason}")
                 break
 
-        # ── Max iterations hit (Slide 33: infinite loop guard) ──────────────
+        # ── Max iterations hit (infinite loop guard) ──────────────
         print("[claude_agent.py] Max iterations reached without final answer.")
         agent_trace.append("[FALLBACK] Max iterations reached → HOLD")
         default_result["agent_trace"] = agent_trace
@@ -544,12 +541,12 @@ def run_agent() -> dict:
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     result = run_agent()
-    print("\n--- Agent Result (ReAct Slide 7) ---")
+    print("\n--- Agent Result (ReAct) ---")
     print(f"Decision    : {result['decision']}")
     print(f"Confidence  : {result['confidence']}%")
     print(f"Reasoning   : {result['reasoning']}")
     print(f"Key Factors : {result['key_factors']}")
     print(f"Risk Note   : {result['risk_note']}")
-    print(f"\n--- ReAct Trace (Slide 32: Live Reasoning Traces) ---")
+    print(f"\n--- ReAct Trace ---")
     for step in result.get("agent_trace", []):
         print(f"  {step}")

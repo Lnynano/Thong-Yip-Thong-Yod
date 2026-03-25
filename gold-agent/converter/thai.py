@@ -2,15 +2,14 @@
 converter/thai.py
 Converts XAUUSD (gold price per troy oz in USD) to Thai Baht denominations.
 
-Based on Slide 21 of the course:
-  "In Thailand, Gold is priced in Baht per Baht-weight (15.244 grams)
-   at 96.5% purity."
+"In Thailand, Gold is priced in Baht per Baht-weight (15.244 grams)
+ at 96.5% purity."
 
 Conversions:
   - USD/troy oz  → THB/troy oz         (multiply by USD/THB rate)
   - THB/troy oz  → THB/gram            (1 troy oz = 31.1035 grams)
   - THB/gram     → THB/baht-weight     (1 baht-weight = 15.244 grams)
-  - All Thai gold prices apply 96.5% purity factor (Slide 21)
+  - All Thai gold prices apply 96.5% purity factor
 
 Purity explanation:
   Thai gold (ทองคำไทย) sold in jewelry shops is 96.5% pure gold (not 99.9%).
@@ -25,7 +24,7 @@ load_dotenv()
 # Conversion constants
 TROY_OZ_TO_GRAMS = 31.1035          # 1 troy ounce = 31.1035 grams (international standard)
 GRAMS_PER_BAHT_WEIGHT = 15.244      # 1 Thai baht-weight (บาท) = 15.244 grams
-THAI_GOLD_PURITY = 0.965            # Thai gold is 96.5% pure (Slide 21)
+THAI_GOLD_PURITY = 0.965            # Thai gold is 96.5% pure
 DEFAULT_USD_THB_RATE = 34.5         # Fallback exchange rate
 
 
@@ -54,7 +53,7 @@ def convert_to_thb(usd_price: float, usd_thb_rate: float = None) -> dict:
     """
     Convert gold price from USD per troy oz to various Thai Baht units.
 
-    Applies the 96.5% purity factor for Thai gold as specified in Slide 21:
+    Applies the 96.5% purity factor for Thai gold:
     "In Thailand, Gold is priced in Baht per Baht-weight (15.244 grams)
      at 96.5% purity."
 
@@ -108,7 +107,7 @@ def convert_to_thb(usd_price: float, usd_thb_rate: float = None) -> dict:
         # Step 3: THB/gram → THB/baht-weight (international 100% pure)
         thb_per_baht_weight = thb_per_gram * GRAMS_PER_BAHT_WEIGHT
 
-        # Step 4: Apply 96.5% purity for Thai gold (Slide 21)
+        # Step 4: Apply 96.5% purity for Thai gold
         thb_per_baht_weight_thai = thb_per_baht_weight * THAI_GOLD_PURITY
 
         result = {
@@ -155,12 +154,12 @@ if __name__ == "__main__":
     test_price = 2350.0   # Example gold price in USD/oz
     result = convert_to_thb(test_price)
 
-    print("\n--- Gold Price Conversion (Slide 21 formulas) ---")
+    print("\n--- Gold Price Conversion ---")
     print(f"USD per troy oz           : ${result['usd_per_oz']:,.2f}")
     print(f"USD/THB rate              : {result['usd_thb_rate']}")
     print(f"THB per troy oz           : {format_thb(result['thb_per_oz'])}")
     print(f"THB per gram              : {format_thb(result['thb_per_gram'])}")
     print(f"THB per baht-wt (100%)    : {format_thb(result['thb_per_baht_weight'])}")
-    print(f"THB per baht-wt (96.5%)   : {format_thb(result['thb_per_baht_weight_thai'])}  ← Thai gold shops")
+    print(f"THB per baht-wt (96.5%)   : {format_thb(result['thb_per_baht_weight_thai'])}")
     print(f"\nPurity factor             : {result['purity'] * 100:.1f}%  (Thai gold standard)")
     print(f"Effective gold per bw     : {GRAMS_PER_BAHT_WEIGHT * THAI_GOLD_PURITY:.5f} grams")

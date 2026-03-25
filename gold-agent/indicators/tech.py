@@ -1,8 +1,8 @@
 """
 indicators/tech.py
-Technical indicator calculations from Slide 23 of the course.
+Technical indicator calculations.
 
-Implements exactly the formulas shown on Slide 23:
+Implements the following formulas:
   - EMA:  EMAₜ = α·Pₜ + (1-α)·EMAₜ₋₁,  where α = 2/(N+1)
   - MACD: MACD = EMA₁₂ - EMA₂₆
   - RSI:  RSI  = 100 - 100 / (1 + RS),  RS = SMMA(Gains,n) / SMMA(Losses,n)
@@ -11,7 +11,7 @@ Additional indicator:
   - Bollinger Bands: middle ± 2 × std(close, period=20)
     (complements RSI and MACD — signals volatility squeezes)
 
-Course principle (Slide 23):
+Design principle:
   "Do not rely on LLMs for numerical calculations. Pre-compute all
    indicators deterministically and pass the results as state."
 """
@@ -21,13 +21,13 @@ import numpy as np
 
 
 # ─────────────────────────────────────────────────────────────
-# RSI  (Slide 23)
+# RSI
 # ─────────────────────────────────────────────────────────────
 def calculate_rsi(df: pd.DataFrame, period: int = 14) -> float:
     """
     Calculate the Relative Strength Index (RSI) using Wilder's smoothing.
 
-    Formula (Slide 23):
+    Formula:
         RSI = 100 - 100 / (1 + RS)
         RS  = SMMA(Gains, n) / SMMA(Losses, n)
 
@@ -54,7 +54,7 @@ def calculate_rsi(df: pd.DataFrame, period: int = 14) -> float:
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
 
-        # Wilder's SMMA: EWM with alpha = 1/period  (Slide 23: SMMA formula)
+        # Wilder's SMMA: EWM with alpha = 1/period
         avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
         avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
 
@@ -71,7 +71,7 @@ def calculate_rsi(df: pd.DataFrame, period: int = 14) -> float:
 
 
 # ─────────────────────────────────────────────────────────────
-# MACD  (Slide 23)
+# MACD
 # ─────────────────────────────────────────────────────────────
 def calculate_macd(df: pd.DataFrame,
                    fast: int = 12,
@@ -80,7 +80,7 @@ def calculate_macd(df: pd.DataFrame,
     """
     Calculate the MACD indicator.
 
-    Formulas (Slide 23):
+    Formulas:
         EMAₜ   = α·Pₜ + (1-α)·EMAₜ₋₁    where α = 2/(N+1)
         MACD   = EMA₁₂  - EMA₂₆
         Signal = EMA(MACD, 9)
@@ -115,7 +115,7 @@ def calculate_macd(df: pd.DataFrame,
 
         close = df["Close"].copy()
 
-        # EMA formula from Slide 23: α = 2/(N+1)
+        # EMA formula: α = 2/(N+1)
         ema_fast = close.ewm(span=fast, adjust=False).mean()
         ema_slow = close.ewm(span=slow, adjust=False).mean()
 
@@ -162,7 +162,7 @@ def calculate_bollinger_bands(df: pd.DataFrame,
         Wide bandwidth         → high volatility market
 
     This indicator complements RSI and MACD by adding a volatility dimension.
-    As per Slide 23: pre-compute all values, pass as structured state to LLM.
+    Pre-compute all values, pass as structured state to LLM.
 
     Args:
         df (pd.DataFrame): DataFrame with a 'Close' column.
@@ -233,16 +233,16 @@ def calculate_bollinger_bands(df: pd.DataFrame,
 
 
 # ─────────────────────────────────────────────────────────────
-# Combined summary  (structured state for LLM — Slide 9 & 23)
+# Combined summary  (structured state for LLM)
 # ─────────────────────────────────────────────────────────────
 def get_signal_summary(df: pd.DataFrame) -> dict:
     """
     Compute RSI, MACD, and Bollinger Bands and return a combined structured dict.
 
-    Per Slide 23: "Pass computed values to the LLM as structured context:
+    "Pass computed values to the LLM as structured context:
     'RSI: 42.1 (Neutral)'"
 
-    Per Slide 9: Use structured state representation, not free-form prose.
+    Use structured state representation, not free-form prose.
 
     Args:
         df (pd.DataFrame): DataFrame with a 'Close' column.
@@ -313,7 +313,7 @@ if __name__ == "__main__":
 
     df = get_gold_price()
     if not df.empty:
-        print("\n--- Technical Indicators (Slide 23 formulas) ---")
+        print("\n--- Technical Indicators ---")
         print(f"RSI  : {calculate_rsi(df)}")
         print(f"MACD : {calculate_macd(df)}")
         print(f"BBands: {calculate_bollinger_bands(df)}")
