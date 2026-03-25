@@ -323,27 +323,34 @@ def build_ui() -> gr.Blocks:
             elem_classes="center",
         )
 
-        # ── Status bar ──────────────────────────────────────────────────────
+        gr.Markdown("---")
+
+        # ── 1. Recommendation ───────────────────────────────────────────────
+        gr.Markdown("## 🤖 Recommendation")
+        decision_html = gr.HTML(value=_decision_badge("HOLD"))
+
+        # ── 2. Status ───────────────────────────────────────────────────────
+        status_box = gr.Textbox(label="Status", value="Starting...", interactive=False)
+
+        # ── 3. Refresh button + last updated ────────────────────────────────
         with gr.Row():
             run_btn      = gr.Button("🔄  Refresh Now", variant="primary", scale=1)
             last_updated = gr.Textbox(
                 label="", value="Loading...", interactive=False, scale=4,
                 elem_classes="small-note",
             )
-        status_box = gr.Textbox(label="Status", value="Starting...", interactive=False)
 
-        gr.Markdown("---")
-
-        # ── Price ───────────────────────────────────────────────────────────
-        gr.Markdown("## 💰 Live Price")
+        # ── Price (fits naturally before chart) ─────────────────────────────
         with gr.Row():
             price_usd = gr.Textbox(label="USD / troy oz", interactive=False)
             price_thb = gr.Textbox(label="THB / baht-weight", interactive=False)
 
-        # ── Chart ───────────────────────────────────────────────────────────
+        gr.Markdown("---")
+
+        # ── 4. Chart ────────────────────────────────────────────────────────
         chart = gr.Plot(label="Gold Price & RSI — 90 Days")
 
-        # ── Indicators ──────────────────────────────────────────────────────
+        # ── 5. Indicators ────────────────────────────────────────────────────
         gr.Markdown("## 📊 Indicators")
         with gr.Row():
             rsi_box  = gr.Textbox(label="RSI (14)", interactive=False)
@@ -351,9 +358,7 @@ def build_ui() -> gr.Blocks:
 
         gr.Markdown("---")
 
-        # ── Claude Decision ──────────────────────────────────────────────────
-        gr.Markdown("## 🤖 Recommendation")
-        decision_html = gr.HTML(value=_decision_badge("HOLD"))
+        # ── 6. Claude's Reasoning ────────────────────────────────────────────
         reasoning_box = gr.Textbox(
             label="Claude's Reasoning",
             value="Waiting for first analysis...",
@@ -382,26 +387,21 @@ def build_ui() -> gr.Blocks:
             elem_classes="center",
         )
 
-        # ── Output list (13 total) ────────────────────────────────────────────
+        # ── Output list (13 total — order matches run_full_analysis return) ──
         outputs = [
-            price_usd, price_thb,       # 2
-            chart,                      # 1
-            rsi_box, macd_box,          # 2
-            decision_html,              # 1
-            reasoning_box,              # 1
-            sharpe_box, drawdown_box, kelly_box,  # 3
-            news_box,                   # 1
-            last_updated,               # 1
-            status_box,                 # 1  → total: 13
+            price_usd, price_thb,
+            chart,
+            rsi_box, macd_box,
+            decision_html,
+            reasoning_box,
+            sharpe_box, drawdown_box, kelly_box,
+            news_box,
+            last_updated,
+            status_box,
         ]
 
-        # Manual refresh button
         run_btn.click(fn=run_full_analysis, inputs=[], outputs=outputs)
-
-        # Auto-run on page load
         demo.load(fn=run_full_analysis, inputs=[], outputs=outputs)
-
-        # Auto-refresh every 5 minutes
         gr.Timer(value=AUTO_REFRESH_SECONDS).tick(
             fn=run_full_analysis, inputs=[], outputs=outputs
         )
