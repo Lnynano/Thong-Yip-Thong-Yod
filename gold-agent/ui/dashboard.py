@@ -1,180 +1,391 @@
 """
 ui/dashboard.py
-Gradio dashboard for the Gold Trading Agent.
+PNS-inspired dark trading dashboard for the Gold Agent.
 
-Features:
-  - Auto-refreshes every 5 minutes (gr.Timer)
-  - Runs automatically on page load
-  - Price + RSI chart (matplotlib)
-  - Live USD/THB exchange rate
-  - Rotating mock news headlines
-  - Fetch timestamp on every price display
-  - Sentiment badge on news section
-  - Clear API-key-missing message in UI
-  - Kelly with plain-English context label
-  - Analysis log table (records every run to CSV)
+Layout (top to bottom):
+  1. Header bar  — title + LIVE indicator
+  2. Price panel — big THB price + USD + change
+  3. Decision    — BUY / SELL / HOLD badge + confidence + reasoning
+  4. Refresh row — button + last-updated text
+  5. Chart       — 90-day price with RSI (dark theme)
+  6. Indicators  — RSI value + MACD value
+  7. Portfolio   — equity, realised P&L, unrealised, win rate, R:R
+  8. Trade log   — colour-coded table of past trades
+  9. Analysis log — every Claude decision recorded
+  10. News        — headlines + sentiment badge
 """
 
-import sys
-import os
+import sys, os, json
 import numpy as np
 import gradio as gr
 
 import matplotlib
-matplotlib.use("Agg")          # non-interactive backend — must be set before pyplot import
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-AUTO_REFRESH_SECONDS = 300     # 5 minutes
+AUTO_REFRESH_SECONDS = 300
+
+# ─────────────────────────────────────────────────────────────
+# Dark PNS-style CSS
+# ─────────────────────────────────────────────────────────────
+PNS_CSS = """
+/* ── Base ──────────────────────────────────────────── */
+body, .gradio-container, .main, .wrap {
+    background: #0b0b0b !important;
+    color: #c8c8c8 !important;
+    font-family: 'Courier New', 'Lucida Console', monospace !important;
+}
+footer, .built-with { display: none !important; }
+.svelte-1gfkn6j  { display: none !important; }
+
+/* ── Panels / cards ─────────────────────────────────── */
+.gr-box, .gr-form, .gr-panel,
+.block, .panel, fieldset {
+    background: #111111 !important;
+    border: 1px solid #1e1e1e !important;
+    border-radius: 6px !important;
+}
+
+/* ── Labels ─────────────────────────────────────────── */
+.label-wrap span, label, .gr-label {
+    color: #555555 !important;
+    font-size: 0.72em !important;
+    letter-spacing: 0.12em !important;
+    text-transform: uppercase !important;
+    font-family: 'Courier New', monospace !important;
+}
+
+/* ── Text inputs / textareas ─────────────────────────── */
+textarea, input[type=text], .gr-text-input {
+    background: #111 !important;
+    border: 1px solid #222 !important;
+    color: #cccccc !important;
+    font-family: 'Courier New', monospace !important;
+    font-size: 0.95em !important;
+}
+
+/* ── Buttons ─────────────────────────────────────────── */
+button.primary { background: #c9f002 !important; color: #000 !important;
+                 font-weight: 900 !important; letter-spacing: 0.08em !important;
+                 border: none !important; font-family: 'Courier New', monospace !important; }
+button.secondary { background: #1a1a1a !important; color: #666 !important;
+                   border: 1px solid #2a2a2a !important;
+                   font-family: 'Courier New', monospace !important; }
+
+/* ── Dataframe / table ───────────────────────────────── */
+.svelte-table, table, .gr-dataframe table {
+    background: #0f0f0f !important; color: #bbb !important;
+    font-size: 0.82em !important; font-family: 'Courier New', monospace !important;
+}
+th { background: #161616 !important; color: #555 !important;
+     text-transform: uppercase !important; font-size: 0.72em !important;
+     letter-spacing: 0.1em !important; border-bottom: 1px solid #222 !important; }
+td { border-bottom: 1px solid #1a1a1a !important; }
+
+/* ── Markdown headings ───────────────────────────────── */
+h1, h2, h3 { color: #888 !important; letter-spacing: 0.15em !important;
+              text-transform: uppercase !important;
+              font-family: 'Courier New', monospace !important; }
+
+/* ── Divider ─────────────────────────────────────────── */
+hr { border-color: #1e1e1e !important; }
+"""
 
 
 # ─────────────────────────────────────────────────────────────
-# Chart builder
+# Chart — dark PNS style
 # ─────────────────────────────────────────────────────────────
 def _build_chart(df) -> plt.Figure:
-    """
-    Build a two-panel matplotlib figure: gold price + RSI.
-
-    Top panel  : 90-day closing price line with 20-day SMA overlay.
-    Bottom panel: RSI (14) with overbought (70) and oversold (30) bands.
-
-    Args:
-        df (pd.DataFrame): DataFrame with 'Close' column indexed by date.
-
-    Returns:
-        plt.Figure: Matplotlib figure ready for gr.Plot.
-    """
-    # Strip timezone from index so matplotlib doesn't complain
+    """90-day price + RSI chart with dark PNS styling."""
     plot_df = df.copy()
     if hasattr(plot_df.index, "tz") and plot_df.index.tz is not None:
         plot_df.index = plot_df.index.tz_localize(None)
 
-    close = plot_df["Close"]
-    sma20 = close.rolling(20).mean()
+    close   = plot_df["Close"]
+    sma20   = close.rolling(20).mean()
+    delta   = close.diff()
+    ag      = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    al      = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    rsi_s   = 100 - (100 / (1 + ag / al.replace(0, np.nan)))
 
-    # RSI series (Wilder's smoothing)
-    delta    = close.diff()
-    avg_gain = delta.clip(lower=0).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
-    avg_loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
-    rs          = avg_gain / avg_loss.replace(0, np.nan)
-    rsi_series  = 100 - (100 / (1 + rs))
+    BG      = "#0b0b0b"
+    LINE    = "#ff7070"       # PNS coral/salmon line
+    SMA_C   = "#444444"
+    RSI_C   = "#c9f002"       # lime green RSI line
+    OB_C    = "#cc3333"
+    OS_C    = "#33aa55"
 
-    fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(11, 6),
-        gridspec_kw={"height_ratios": [3, 1]},
-        sharex=True,
-    )
-    fig.patch.set_facecolor("#ffffff")
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6),
+                                    gridspec_kw={"height_ratios": [3, 1]},
+                                    sharex=True, facecolor=BG)
+    for ax in (ax1, ax2):
+        ax.set_facecolor(BG)
+        for spine in ax.spines.values():
+            spine.set_color("#1e1e1e")
+        ax.tick_params(colors="#444", labelsize=8)
+        ax.grid(True, color="#1a1a1a", linewidth=0.6)
+        ax.yaxis.label.set_color("#555")
 
-    # ── Top panel: Price ─────────────────────────────────────
-    ax1.plot(plot_df.index, close, color="#D4AF37", linewidth=2, label="Gold (XAUUSD)")
-    ax1.plot(plot_df.index, sma20, color="#999", linewidth=1,
-             linestyle="--", alpha=0.8, label="SMA 20")
+    # Price panel
+    ax1.plot(plot_df.index, close, color=LINE, linewidth=1.6, zorder=3)
+    ax1.plot(plot_df.index, sma20, color=SMA_C, linewidth=1, linestyle="--", alpha=0.6, zorder=2)
     ax1.fill_between(plot_df.index, close, close.min() * 0.999,
-                     alpha=0.07, color="#D4AF37")
-    ax1.set_ylabel("USD / troy oz", fontsize=9)
-    ax1.set_title("Gold Price — Last 90 Days", fontsize=11, fontweight="bold", pad=8)
-    ax1.legend(fontsize=9, loc="upper left")
-    ax1.grid(True, alpha=0.2)
-    ax1.set_facecolor("#fafafa")
+                     alpha=0.08, color=LINE, zorder=1)
+    ax1.set_ylabel("USD / oz", color="#555", fontsize=9)
+    ax1.set_title("XAUUSD  —  90D", color="#555", fontsize=9,
+                  loc="left", pad=8, fontfamily="Courier New")
+    ax1.annotate(f"  ${float(close.iloc[-1]):,.2f}",
+                 xy=(plot_df.index[-1], float(close.iloc[-1])),
+                 color=LINE, fontsize=9, fontweight="bold",
+                 fontfamily="Courier New")
 
-    # Latest price annotation
-    last_price = float(close.iloc[-1])
-    ax1.annotate(
-        f"  ${last_price:,.2f}",
-        xy=(plot_df.index[-1], last_price),
-        fontsize=9, color="#D4AF37", fontweight="bold",
-    )
-
-    # ── Bottom panel: RSI ────────────────────────────────────
-    ax2.plot(plot_df.index, rsi_series, color="#6c5ce7", linewidth=1.5)
-    ax2.axhline(70, color="#e74c3c", linestyle="--", alpha=0.7, linewidth=1)
-    ax2.axhline(30, color="#27ae60", linestyle="--", alpha=0.7, linewidth=1)
-    ax2.fill_between(plot_df.index, rsi_series, 70,
-                     where=(rsi_series >= 70), alpha=0.15, color="#e74c3c", interpolate=True)
-    ax2.fill_between(plot_df.index, rsi_series, 30,
-                     where=(rsi_series <= 30), alpha=0.15, color="#27ae60", interpolate=True)
-    ax2.text(plot_df.index[2], 73, "Overbought", color="#e74c3c", fontsize=8, alpha=0.8)
-    ax2.text(plot_df.index[2], 22, "Oversold",   color="#27ae60", fontsize=8, alpha=0.8)
-    ax2.set_ylabel("RSI (14)", fontsize=9)
+    # RSI panel
+    ax2.plot(plot_df.index, rsi_s, color=RSI_C, linewidth=1.4, zorder=3)
+    ax2.axhline(70, color=OB_C, linestyle="--", alpha=0.6, linewidth=0.8)
+    ax2.axhline(30, color=OS_C, linestyle="--", alpha=0.6, linewidth=0.8)
+    ax2.fill_between(plot_df.index, rsi_s, 70,
+                     where=(rsi_s >= 70), alpha=0.12, color=OB_C, interpolate=True)
+    ax2.fill_between(plot_df.index, rsi_s, 30,
+                     where=(rsi_s <= 30), alpha=0.12, color=OS_C, interpolate=True)
+    ax2.set_ylabel("RSI 14", color="#555", fontsize=8)
     ax2.set_ylim(0, 100)
-    ax2.grid(True, alpha=0.2)
-    ax2.set_facecolor("#fafafa")
     ax2.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
     ax2.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
-    plt.setp(ax2.xaxis.get_majorticklabels(), rotation=30, ha="right", fontsize=8)
+    plt.setp(ax2.xaxis.get_majorticklabels(), rotation=30, ha="right",
+             fontsize=7, color="#444")
 
-    plt.tight_layout(pad=1.5)
+    plt.tight_layout(pad=1.0)
+    return fig
+
+
+def _build_equity_chart(equity_history: list) -> plt.Figure:
+    """P&L equity curve chart (PNS second-panel style)."""
+    BG   = "#0b0b0b"
+    LINE = "#c9f002"
+
+    fig, ax = plt.subplots(figsize=(12, 3), facecolor=BG)
+    ax.set_facecolor(BG)
+    for spine in ax.spines.values():
+        spine.set_color("#1e1e1e")
+    ax.tick_params(colors="#444", labelsize=8)
+    ax.grid(True, color="#1a1a1a", linewidth=0.6)
+
+    if len(equity_history) >= 2:
+        values = [e["equity"] for e in equity_history]
+        xs     = list(range(len(values)))
+        ax.plot(xs, values, color=LINE, linewidth=1.8, zorder=3)
+        ax.fill_between(xs, values, values[0], alpha=0.1, color=LINE, zorder=1)
+        # Mark start
+        ax.axhline(values[0], color="#333", linestyle="--", linewidth=0.8)
+        ax.set_ylabel("Equity (THB)", color="#555", fontsize=8)
+        ax.set_title("P&L CURVE", color="#555", fontsize=9,
+                     loc="left", pad=6, fontfamily="Courier New")
+        last = values[-1]
+        color = "#c9f002" if last >= values[0] else "#cc3333"
+        ax.annotate(f"  ฿{last:,.2f}", xy=(xs[-1], last),
+                    color=color, fontsize=9, fontweight="bold")
+    else:
+        ax.text(0.5, 0.5, "No trade history yet",
+                ha="center", va="center", color="#444",
+                transform=ax.transAxes, fontsize=10)
+
+    plt.tight_layout(pad=1.0)
     return fig
 
 
 # ─────────────────────────────────────────────────────────────
 # HTML helpers
 # ─────────────────────────────────────────────────────────────
-def _decision_badge(decision: str, confidence: int = 0) -> str:
-    """Return a color-coded HTML badge for BUY / SELL / HOLD."""
-    styles = {
-        "BUY" : ("#155724", "#d4edda", "#c3e6cb", "📈"),
-        "SELL": ("#721c24", "#f8d7da", "#f5c6cb", "📉"),
-        "HOLD": ("#856404", "#fff3cd", "#ffeaa7", "⏸️"),
+def _price_html(price_thb: float, price_usd: float, change_thb: float,
+                fetch_time: str, rate: float, rate_src: str) -> str:
+    """Large price display panel — PNS style."""
+    sign  = "+" if change_thb >= 0 else ""
+    color = "#c9f002" if change_thb >= 0 else "#cc3333"
+    change_pct = (change_thb / (price_thb - change_thb) * 100) if (price_thb - change_thb) != 0 else 0
+    return f"""
+<div style="font-family:'Courier New',monospace; padding:20px 24px; background:#0f0f0f;
+            border:1px solid #1e1e1e; border-radius:6px;">
+  <div style="color:#555; font-size:0.72em; letter-spacing:0.15em; margin-bottom:8px;">
+    XAUUSD  ·  GOLD (THB/BAHT-WEIGHT 96.5%)
+  </div>
+  <div style="display:flex; align-items:baseline; gap:20px; flex-wrap:wrap;">
+    <span style="color:#ffffff; font-size:3.2em; font-weight:900;
+                 letter-spacing:-1px;">฿{price_thb:,.2f}</span>
+    <span style="color:{color}; font-size:1.3em; font-weight:700;">
+      {sign}{change_thb:,.2f} ({sign}{change_pct:.2f}%)
+    </span>
+  </div>
+  <div style="color:#444; font-size:0.78em; margin-top:8px; letter-spacing:0.05em;">
+    ${price_usd:,.2f} / troy oz &nbsp;·&nbsp;
+    rate {rate:.2f} ({rate_src}) &nbsp;·&nbsp;
+    as of {fetch_time} &nbsp;·&nbsp; 15-min delay
+  </div>
+</div>"""
+
+
+def _decision_html(decision: str, confidence: int, reasoning: str) -> str:
+    """BUY/SELL/HOLD card with reasoning — PNS style."""
+    cfg = {
+        "BUY":  ("#c9f002", "📈"),
+        "SELL": ("#cc3333", "📉"),
+        "HOLD": ("#555555", "⏸"),
     }
-    d = decision.upper()
-    tc, bg, bc, icon = styles.get(d, ("#555", "#eee", "#ccc", "❓"))
-    conf = f"Confidence: {confidence}%" if confidence > 0 else ""
-    return (
-        f'<div style="text-align:center;padding:28px;border-radius:14px;'
-        f'background:{bg};border:3px solid {bc};box-shadow:0 2px 8px rgba(0,0,0,0.08);">'
-        f'<div style="font-size:3em;margin-bottom:6px;">{icon}</div>'
-        f'<div style="font-size:2.8em;color:{tc};font-weight:900;letter-spacing:5px;">{d}</div>'
-        f'<div style="font-size:1em;color:{tc};margin-top:6px;">{conf}</div>'
-        f'</div>'
+    color, icon = cfg.get(decision.upper(), ("#555", "?"))
+    lines = "".join(
+        f'<div style="margin:3px 0; color:#888; font-size:0.88em;">{l}</div>'
+        for l in reasoning.split("\n") if l.strip()
     )
+    return f"""
+<div style="font-family:'Courier New',monospace; padding:20px 24px; background:#0f0f0f;
+            border:1px solid #1e1e1e; border-radius:6px;">
+  <div style="color:#555; font-size:0.72em; letter-spacing:0.15em; margin-bottom:10px;">
+    AGENT RECOMMENDATION
+  </div>
+  <div style="display:flex; align-items:center; gap:20px; flex-wrap:wrap;">
+    <span style="color:{color}; font-size:2.8em; font-weight:900;
+                 letter-spacing:6px;">{icon} {decision.upper()}</span>
+    <span style="color:{color}; font-size:1em;">Confidence: {confidence}%</span>
+  </div>
+  <div style="margin-top:14px; border-top:1px solid #1e1e1e; padding-top:12px;">
+    {lines}
+  </div>
+</div>"""
+
+
+def _portfolio_html(p: dict) -> str:
+    """Portfolio stats bar — PNS style."""
+    eq_color  = "#c9f002" if p["total_pnl"] >= 0 else "#cc3333"
+    rl_color  = "#c9f002" if p["realized_pnl"] >= 0 else "#cc3333"
+    ur_color  = "#c9f002" if p["unrealized_pnl"] >= 0 else "#cc3333"
+    sign      = lambda v: "+" if v >= 0 else ""
+
+    pos_block = ""
+    if p["open_position"]:
+        op = p["open_position"]
+        oc = "#c9f002" if op["unrealized"] >= 0 else "#cc3333"
+        pos_block = f"""
+      <div style="margin-top:14px; border-top:1px solid #1e1e1e; padding-top:12px;
+                  color:#555; font-size:0.78em;">
+        OPEN POSITION &nbsp;·&nbsp;
+        Entry ฿{op["entry_price"]:,.0f} &nbsp;·&nbsp;
+        Size {op["size_bw"]:.5f} bw &nbsp;·&nbsp;
+        Unrealised
+        <span style="color:{oc};">{sign(op["unrealized"])}฿{op["unrealized"]:,.2f}
+        ({sign(op["unrealized_pct"])}{op["unrealized_pct"]:.2f}%)</span>
+        &nbsp;·&nbsp; Since {op["entry_time"]}
+      </div>"""
+
+    def stat(label, value, color="#c8c8c8"):
+        return f"""
+      <div style="min-width:120px;">
+        <div style="color:#555; font-size:0.65em; letter-spacing:0.1em;
+                    margin-bottom:4px;">{label}</div>
+        <div style="color:{color}; font-size:1.25em; font-weight:700;">{value}</div>
+      </div>"""
+
+    return f"""
+<div style="font-family:'Courier New',monospace; padding:20px 24px; background:#0f0f0f;
+            border:1px solid #1e1e1e; border-radius:6px;">
+  <div style="color:#555; font-size:0.72em; letter-spacing:0.15em; margin-bottom:14px;">
+    PORTFOLIO  &nbsp;·&nbsp; PAPER TRADING
+  </div>
+  <div style="display:flex; flex-wrap:wrap; gap:24px; align-items:flex-start;">
+    {stat("TOTAL EQUITY",  f"฿{p['total_equity']:,.2f}",
+          eq_color if p['total_pnl'] != 0 else '#c8c8c8')}
+    {stat("REALIZED P&L",  f"{sign(p['realized_pnl'])}฿{p['realized_pnl']:,.2f}", rl_color)}
+    {stat("UNREALIZED",    f"{sign(p['unrealized_pnl'])}฿{p['unrealized_pnl']:,.2f}", ur_color)}
+    {stat("WIN RATE",      f"{p['win_rate']:.1f}%",
+          '#c9f002' if p['win_rate'] >= 50 else '#cc3333')}
+    {stat("W / L",         f"{p['wins']} / {p['losses']}")}
+    {stat("TRADES",        str(p['total_trades']))}
+    {stat("R:R",           f"{p['rr_ratio']:.2f}:1" if p['rr_ratio'] > 0 else "—")}
+    {stat("BALANCE",       f"฿{p['initial_balance']:,.0f}", "#555")}
+  </div>
+  {pos_block}
+</div>"""
+
+
+def _outcome_bar_html(outcomes: list) -> str:
+    """Coloured WIN/LOSS square bar — like PNS bottom bar."""
+    if not outcomes:
+        return '<div style="color:#333; font-size:0.8em; padding:8px;">No trades yet</div>'
+    squares = ""
+    for o in outcomes:
+        c = "#c9f002" if o == "WIN" else "#cc3333"
+        squares += f'<span style="display:inline-block; width:18px; height:18px; ' \
+                   f'background:{c}; margin:2px; border-radius:2px;" title="{o}"></span>'
+    return f'<div style="padding:8px 0;">{squares}</div>'
+
+
+def _trade_table_html(trades: list) -> str:
+    """HTML trade journal table — PNS style."""
+    if not trades:
+        return '<div style="color:#333; font-size:0.85em; padding:16px; ' \
+               'font-family:Courier New,monospace;">No closed trades yet.</div>'
+
+    rows = ""
+    for t in trades:
+        oc    = "#c9f002" if t["outcome"] == "WIN" else "#cc3333"
+        sign  = "+" if t["pnl_thb"] >= 0 else ""
+        exit_d = t["exit_time"][:16] if t.get("exit_time") else "—"
+        rows += f"""
+        <tr>
+          <td style="color:#555; padding:6px 10px;">{exit_d}</td>
+          <td style="color:{oc}; font-weight:700; padding:6px 10px;">{t['outcome']}</td>
+          <td style="color:#888; padding:6px 10px;">฿{t['entry_price']:,.0f}</td>
+          <td style="color:#888; padding:6px 10px;">฿{t['exit_price']:,.0f}</td>
+          <td style="color:#777; padding:6px 10px;">{t['size_bw']:.5f} bw</td>
+          <td style="color:{oc}; font-weight:700; padding:6px 10px;">
+            {sign}฿{t['pnl_thb']:,.2f} ({sign}{t['pnl_pct']:.2f}%)
+          </td>
+        </tr>"""
+
+    return f"""
+<div style="font-family:'Courier New',monospace; overflow-x:auto;">
+  <table style="width:100%; border-collapse:collapse; font-size:0.83em;
+                background:#0f0f0f; color:#bbb;">
+    <thead>
+      <tr style="border-bottom:1px solid #222;">
+        <th style="color:#444; text-align:left; padding:8px 10px;
+                   letter-spacing:0.1em; font-size:0.75em;">TIME</th>
+        <th style="color:#444; text-align:left; padding:8px 10px;
+                   letter-spacing:0.1em; font-size:0.75em;">RESULT</th>
+        <th style="color:#444; text-align:left; padding:8px 10px;
+                   letter-spacing:0.1em; font-size:0.75em;">ENTRY</th>
+        <th style="color:#444; text-align:left; padding:8px 10px;
+                   letter-spacing:0.1em; font-size:0.75em;">EXIT</th>
+        <th style="color:#444; text-align:left; padding:8px 10px;
+                   letter-spacing:0.1em; font-size:0.75em;">SIZE</th>
+        <th style="color:#444; text-align:left; padding:8px 10px;
+                   letter-spacing:0.1em; font-size:0.75em;">P&L</th>
+      </tr>
+    </thead>
+    <tbody>{rows}</tbody>
+  </table>
+</div>"""
 
 
 def _news_html(headlines: list, sentiment: str) -> str:
-    """Return HTML news block with a colored sentiment badge."""
-    badge_styles = {
-        "BULLISH": ("#155724", "#d4edda", "📈"),
-        "BEARISH": ("#721c24", "#f8d7da", "📉"),
-        "NEUTRAL": ("#856404", "#fff3cd", "➡️"),
-    }
-    tc, bg, icon = badge_styles.get(sentiment, ("#555", "#eee", "❓"))
-    badge = (
-        f'<span style="background:{bg};color:{tc};padding:4px 14px;'
-        f'border-radius:12px;font-weight:bold;font-size:0.9em;">'
-        f'{icon} {sentiment}</span>'
-    )
+    """News block with sentiment badge."""
+    cfg  = {"BULLISH": ("#c9f002", "▲"), "BEARISH": ("#cc3333", "▼"), "NEUTRAL": ("#888", "—")}
+    col, sym = cfg.get(sentiment, ("#888", "—"))
     items = "".join(
-        f'<li style="margin:7px 0;font-size:0.95em;line-height:1.4;">{h}</li>'
-        for h in headlines
+        f'<div style="padding:5px 0; border-bottom:1px solid #1a1a1a; '
+        f'color:#888; font-size:0.88em;">{i+1}. {h}</div>'
+        for i, h in enumerate(headlines)
     )
-    return (
-        f'<div style="padding:12px;">'
-        f'<div style="margin-bottom:10px;">Overall Sentiment: {badge}</div>'
-        f'<ol style="margin:0;padding-left:20px;">{items}</ol>'
-        f'</div>'
-    )
-
-
-def _kelly_label(half_kelly_pct: str) -> str:
-    """Add a plain-English risk label next to the Kelly percentage."""
-    try:
-        val = float(half_kelly_pct.replace("%", "").strip())
-        if val == 0:
-            label = "— do not trade"
-        elif val < 3:
-            label = "very small (low conviction)"
-        elif val < 8:
-            label = "small (moderate conviction)"
-        elif val < 15:
-            label = "moderate"
-        else:
-            label = "large — double-check signal"
-        return f"{half_kelly_pct}  ({label})"
-    except Exception:
-        return half_kelly_pct
+    return f"""
+<div style="font-family:'Courier New',monospace; padding:16px 20px; background:#0f0f0f;
+            border:1px solid #1e1e1e; border-radius:6px;">
+  <div style="margin-bottom:10px;">
+    <span style="color:#555; font-size:0.7em; letter-spacing:0.1em;">SENTIMENT &nbsp;</span>
+    <span style="color:{col}; font-weight:700; font-size:0.9em;">{sym} {sentiment}</span>
+  </div>
+  {items}
+</div>"""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -182,271 +393,296 @@ def _kelly_label(half_kelly_pct: str) -> str:
 # ─────────────────────────────────────────────────────────────
 def run_full_analysis() -> tuple:
     """
-    Run the complete pipeline and return values for all 13 UI components.
+    Run the complete pipeline and return values for all UI outputs.
 
-    Pipeline: price → indicators → news → THB → risk → Claude → chart
-
-    Returns:
-        tuple of 13 values:
-            price_usd, price_thb, chart_fig,
-            rsi_str, macd_str,
-            decision_html,
-            reasoning,
-            sharpe_str, drawdown_str, kelly_str,
-            news_html,
-            last_updated,
-            status
+    Returns 15 values:
+        header_html, price_html, decision_html_out,
+        last_updated, chart_fig, rsi_str, macd_str,
+        portfolio_html, equity_chart, outcome_bar_html,
+        trade_table_html, news_html_out, log_df,
+        indicators_str, status
     """
     try:
-        # ── 1. Price ────────────────────────────────────────────────────────
+        # 1. Price
         from data.fetch import get_gold_price, get_fetch_time
         df = get_gold_price()
-
         if df.empty:
-            return _error_tuple("Failed to fetch price data. Check your internet connection.")
+            return _error_outputs("Failed to fetch price data.")
 
-        current_price = float(df["Close"].iloc[-1])
-        fetch_time    = get_fetch_time()
+        price_usd   = float(df["Close"].iloc[-1])
+        prev_usd    = float(df["Close"].iloc[-2]) if len(df) > 1 else price_usd
+        fetch_time  = get_fetch_time()
 
-        # ── 2. Chart ────────────────────────────────────────────────────────
+        # 2. Chart
         try:
             chart_fig = _build_chart(df)
         except Exception as e:
-            print(f"[dashboard.py] Chart error: {e}")
+            print(f"[dashboard] Chart error: {e}")
             chart_fig = None
 
-        # ── 3. Indicators ───────────────────────────────────────────────────
+        # 3. Indicators
         from indicators.tech import calculate_rsi, calculate_macd
         rsi  = calculate_rsi(df)
         macd = calculate_macd(df)
-
-        rsi_signal = "Overbought 🔴" if rsi > 70 else "Oversold 🟢" if rsi < 30 else "Neutral 🟡"
-        macd_trend = "▲ Bullish" if macd["histogram"] > 0 else "▼ Bearish"
+        rsi_signal  = "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else "NEUTRAL"
+        macd_signal = "BULLISH" if macd["histogram"] > 0 else "BEARISH"
         rsi_str  = f"{rsi:.1f}  —  {rsi_signal}"
-        macd_str = f"Histogram: {macd['histogram']:+.2f}  —  {macd_trend}"
+        macd_str = f"{macd['histogram']:+.2f}  —  {macd_signal}"
+        indicators_str = f"RSI {rsi:.1f} {rsi_signal}  ·  MACD {macd['histogram']:+.3f} {macd_signal}"
 
-        # ── 4. News ─────────────────────────────────────────────────────────
+        # 4. News
         from news.sentiment import get_gold_news, get_sentiment_summary
         headlines = get_gold_news(5)
         sentiment = get_sentiment_summary(headlines)
         news_block = _news_html(headlines, sentiment)
 
-        # ── 5. THB conversion (live rate) ───────────────────────────────────
-        from converter.thai import convert_to_thb, format_thb
-        thb      = convert_to_thb(current_price)
-        rate_src = "live" if thb["rate_source"] == "live" else "manual"
-        price_usd = f"${current_price:,.2f}  (as of {fetch_time}, 15-min delay)"
-        price_thb = (
-            f"{format_thb(thb['thb_per_baht_weight_thai'])} / baht-weight  "
-            f"(96.5% purity · rate {thb['usd_thb_rate']:.2f} {rate_src})"
-        )
+        # 5. THB conversion
+        from converter.thai import convert_to_thb
+        thb      = convert_to_thb(price_usd)
+        thb_now  = thb["thb_per_baht_weight_thai"]
+        thb_prev = thb_now * (prev_usd / price_usd) if price_usd > 0 else thb_now
+        change   = thb_now - thb_prev
+        rate     = thb["usd_thb_rate"]
+        rate_src = thb["rate_source"]
 
-        # ── 6. Risk metrics ─────────────────────────────────────────────────
-        from risk.metrics import calculate_risk
-        risk = calculate_risk(df)
-        sharpe_str   = f"{risk['sharpe']:.2f}  ({risk['sharpe_label']})"
-        drawdown_str = risk["drawdown_pct"]
-        kelly_str    = _kelly_label(risk["half_kelly_pct"])
-
-        # ── 7. Claude agent ─────────────────────────────────────────────────
+        # 6. Claude agent
         from agent.claude_agent import run_agent
-        agent = run_agent()
-
+        agent      = run_agent()
         decision   = agent.get("decision", "HOLD")
         confidence = agent.get("confidence", 0)
-        reasoning  = agent.get("reasoning", "No reasoning available.")
+        reasoning  = agent.get("reasoning", "No reasoning.")
 
-        # Surface API key error clearly in the UI
         api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
         if not api_key or api_key == "your_key_here":
-            reasoning = (
-                "⚠️  ANTHROPIC_API_KEY is not set.\n"
-                "Open your .env file and add:\n\n"
-                "    ANTHROPIC_API_KEY=sk-ant-...\n\n"
-                "The BUY/SELL/HOLD decision above is a default HOLD until a key is configured."
-            )
+            reasoning = ("ANTHROPIC_API_KEY not set.\n"
+                         "Add it to your .env file to enable Claude analysis.")
 
-        last_updated = f"Last updated: {fetch_time}  (auto-refreshes every 5 min)"
-        status       = f"✅  {decision}  —  {confidence}% confidence  ·  fetched {fetch_time}"
+        # 7. Paper trade execution
+        from trader.paper_engine import execute_paper_trade, get_portfolio_summary, \
+                                        get_trade_history, get_equity_history, get_recent_outcomes
+        trade_result = execute_paper_trade(decision, confidence, thb_now)
+        portfolio    = get_portfolio_summary(thb_now)
+        trades       = get_trade_history(20)
+        equity_hist  = get_equity_history()
+        outcomes     = get_recent_outcomes(15)
 
-        # ── 8. Write to log ─────────────────────────────────────────────────
+        try:
+            eq_chart = _build_equity_chart(equity_hist)
+        except Exception:
+            eq_chart = None
+
+        # 8. Log analysis
         from logger.trade_log import log_analysis, get_recent_logs
-        log_analysis(
-            decision=decision, confidence=confidence,
-            price_usd=price_usd, price_thb=price_thb,
-            rsi=rsi_str, macd=macd_str,
-            sharpe=sharpe_str, reasoning=reasoning,
-        )
+        from risk.metrics import calculate_risk
+        risk = calculate_risk(df)
+        log_analysis(decision=decision, confidence=confidence,
+                     price_usd=f"${price_usd:,.2f}",
+                     price_thb=f"฿{thb_now:,.0f}",
+                     rsi=rsi_str, macd=macd_str,
+                     sharpe=f"{risk['sharpe']:.2f}", reasoning=reasoning)
         log_df = get_recent_logs(50)
 
+        # Build HTML blocks
+        price_block   = _price_html(thb_now, price_usd, change, fetch_time, rate, rate_src)
+        dec_block     = _decision_html(decision, confidence, reasoning)
+        port_block    = _portfolio_html(portfolio)
+        outcome_bar   = _outcome_bar_html(outcomes)
+        trade_table   = _trade_table_html(trades)
+        last_updated  = f"Last updated: {fetch_time}  ·  auto-refresh every 5 min"
+
+        # Paper trade action notice
+        action = trade_result.get("action", "")
+        if action == "OPENED":
+            status = f"✅ OPENED position  ·  {trade_result['size_bw']:.5f} bw @ ฿{trade_result['price_thb']:,.0f}"
+        elif action == "CLOSED":
+            pnl = trade_result.get("pnl_thb", 0)
+            status = f"{'🟢' if pnl >= 0 else '🔴'} CLOSED  ·  P&L {'+' if pnl>=0 else ''}฿{pnl:.2f}  ·  {trade_result['outcome']}"
+        elif action == "SKIP":
+            status = f"⏸  {trade_result.get('reason', 'No trade')}  ·  {decision} {confidence}%"
+        else:
+            status = f"HOLD  ·  no trade action  ·  fetched {fetch_time}"
+
         return (
-            price_usd, price_thb,
+            price_block, dec_block,
+            last_updated,
             chart_fig,
             rsi_str, macd_str,
-            _decision_badge(decision, confidence),
-            reasoning,
-            sharpe_str, drawdown_str, kelly_str,
+            port_block, eq_chart, outcome_bar,
+            trade_table,
             news_block,
-            last_updated,
-            status,
             log_df,
+            indicators_str,
+            status,
         )
 
     except Exception as e:
-        err = f"Analysis error: {e}"
-        print(f"[dashboard.py] {err}")
-        return _error_tuple(err)
+        err = f"Error: {e}"
+        print(f"[dashboard] {err}")
+        return _error_outputs(err)
 
 
-def _error_tuple(msg: str) -> tuple:
-    """Return safe defaults for all 14 outputs on error."""
+def _error_outputs(msg: str) -> tuple:
     import pandas as pd
     from logger.trade_log import get_recent_logs
+    from trader.paper_engine import get_portfolio_summary, get_trade_history, \
+                                     get_equity_history, get_recent_outcomes
+
+    portfolio  = get_portfolio_summary(0)
+    port_block = _portfolio_html(portfolio)
+    eq_hist    = get_equity_history()
+
+    try:
+        eq_chart = _build_equity_chart(eq_hist)
+    except Exception:
+        eq_chart = None
+
     return (
-        "N/A", "N/A",
+        f'<div style="color:#cc3333;padding:20px;font-family:Courier New;">{msg}</div>',
+        _decision_html("HOLD", 0, msg),
+        "Last updated: —",
         None,
         "N/A", "N/A",
-        _decision_badge("HOLD"),
-        msg,
-        "N/A", "N/A", "N/A",
-        f"<div style='padding:12px;color:#721c24;'>{msg}</div>",
-        "Last updated: —",
-        msg,
+        port_block, eq_chart, _outcome_bar_html(get_recent_outcomes(15)),
+        _trade_table_html(get_trade_history(20)),
+        f'<div style="color:#555;padding:16px;">{msg}</div>',
         get_recent_logs(50),
+        "—",
+        msg,
     )
 
 
 # ─────────────────────────────────────────────────────────────
-# UI layout
+# UI Layout
 # ─────────────────────────────────────────────────────────────
 def build_ui() -> gr.Blocks:
-    """Build and return the Gradio dashboard."""
-    with gr.Blocks(
-        title="Gold Trading Agent 🥇",
-        theme=gr.themes.Soft(),
-        css="""
-            .center { text-align: center; }
-            .small-note { font-size: 0.8em; color: #888; }
-            footer { display: none !important; }
-        """,
-    ) as demo:
+    """Build and return the PNS-style Gradio dashboard."""
 
-        # ── Header ──────────────────────────────────────────────────────────
-        gr.Markdown("# 🥇 Gold Trading Agent", elem_classes="center")
-        gr.Markdown(
-            "AI-powered gold market analysis · Updates every 5 minutes automatically",
-            elem_classes="center",
-        )
+    with gr.Blocks(title="GOLD AGENT", theme=gr.themes.Base(), css=PNS_CSS) as demo:
 
-        gr.Markdown("---")
+        # ── Header ──────────────────────────────────────────
+        gr.HTML("""
+        <div style="font-family:'Courier New',monospace; padding:14px 24px;
+                    background:#0f0f0f; border-bottom:1px solid #1e1e1e;
+                    display:flex; justify-content:space-between; align-items:center;">
+          <span style="color:#888; font-size:1.1em; font-weight:700;
+                       letter-spacing:0.2em;">🥇 GOLD AGENT</span>
+          <span style="color:#555; font-size:0.75em; letter-spacing:0.1em;">
+            XAUUSD &nbsp;·&nbsp; PAPER TRADING &nbsp;·&nbsp;
+            <span style="color:#c9f002;">● LIVE</span>
+          </span>
+        </div>""")
 
-        # ── 1. Recommendation ───────────────────────────────────────────────
-        gr.Markdown("## 🤖 Recommendation")
-        decision_html = gr.HTML(value=_decision_badge("HOLD"))
+        # ── 1. Price ─────────────────────────────────────────
+        price_html = gr.HTML()
 
-        # ── 2. Status ───────────────────────────────────────────────────────
-        status_box = gr.Textbox(label="Status", value="Starting...", interactive=False)
+        # ── 2. Decision + Reasoning ──────────────────────────
+        decision_html = gr.HTML()
 
-        # ── 3. Refresh button + last updated ────────────────────────────────
+        # ── 3. Refresh row ───────────────────────────────────
         with gr.Row():
-            run_btn      = gr.Button("🔄  Refresh Now", variant="primary", scale=1)
-            last_updated = gr.Textbox(
-                label="", value="Loading...", interactive=False, scale=4,
-                elem_classes="small-note",
-            )
+            run_btn      = gr.Button("⟳  REFRESH NOW", variant="primary", scale=1, size="sm")
+            last_updated = gr.Textbox(value="Loading...", interactive=False,
+                                      label="", scale=5, max_lines=1)
 
-        # ── Price (fits naturally before chart) ─────────────────────────────
-        with gr.Row():
-            price_usd = gr.Textbox(label="USD / troy oz", interactive=False)
-            price_thb = gr.Textbox(label="THB / baht-weight", interactive=False)
+        gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
 
-        gr.Markdown("---")
+        # ── 4. Chart ─────────────────────────────────────────
+        gr.Markdown("## PRICE  &  RSI")
+        chart = gr.Plot(label="")
 
-        # ── 4. Chart ────────────────────────────────────────────────────────
-        chart = gr.Plot(label="Gold Price & RSI — 90 Days")
-
-        # ── 5. Indicators ────────────────────────────────────────────────────
-        gr.Markdown("## 📊 Indicators")
+        # ── 5. Indicators ────────────────────────────────────
+        gr.Markdown("## INDICATORS")
         with gr.Row():
             rsi_box  = gr.Textbox(label="RSI (14)", interactive=False)
-            macd_box = gr.Textbox(label="MACD", interactive=False)
+            macd_box = gr.Textbox(label="MACD Histogram", interactive=False)
 
-        gr.Markdown("---")
+        gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
 
-        # ── 6. Claude's Reasoning ────────────────────────────────────────────
-        reasoning_box = gr.Textbox(
-            label="Claude's Reasoning",
-            value="Waiting for first analysis...",
-            lines=4,
-            interactive=False,
-        )
+        # ── 6. Portfolio ─────────────────────────────────────
+        gr.Markdown("## PORTFOLIO")
+        portfolio_html = gr.HTML()
 
-        gr.Markdown("---")
+        # ── 7. P&L Curve ─────────────────────────────────────
+        gr.Markdown("## P&L CURVE")
+        equity_chart = gr.Plot(label="")
 
-        # ── Risk ─────────────────────────────────────────────────────────────
-        gr.Markdown("## ⚖️ Risk  (90-day window)")
+        # ── 8. Trade history bar + journal ───────────────────
+        gr.Markdown("## TRADE JOURNAL")
+        outcome_bar  = gr.HTML()
+        trade_table  = gr.HTML()
+
         with gr.Row():
-            sharpe_box   = gr.Textbox(label="Sharpe Ratio", interactive=False)
-            drawdown_box = gr.Textbox(label="Max Drawdown", interactive=False)
-            kelly_box    = gr.Textbox(label="Suggested Position Size", interactive=False)
+            reset_btn = gr.Button("↺  RESET PORTFOLIO", variant="secondary", scale=1, size="sm")
+            gr.HTML('<div style="color:#333; font-size:0.75em; padding:8px; '
+                    'font-family:Courier New;">Paper trading only — no real money.</div>')
 
-        gr.Markdown("---")
+        gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
 
-        # ── News ─────────────────────────────────────────────────────────────
-        gr.Markdown("## 📰 Gold News")
-        news_box = gr.HTML(value="<div style='padding:12px;color:#888;'>Loading news...</div>")
-
-        gr.Markdown("---")
-
-        # ── Analysis Log ─────────────────────────────────────────────────────
-        gr.Markdown("## 📋 Analysis Log")
+        # ── 9. Analysis log ──────────────────────────────────
+        gr.Markdown("## ANALYSIS LOG")
         log_table = gr.Dataframe(
             headers=["Timestamp", "Decision", "Confidence %", "Price USD",
                      "Price THB (baht-wt)", "RSI", "MACD", "Sharpe", "Reasoning"],
-            label="",
-            interactive=False,
-            wrap=True,
+            label="", interactive=False, wrap=True,
         )
         with gr.Row():
-            clear_btn = gr.Button("🗑️  Clear Log", variant="secondary", scale=1)
-            gr.Markdown(
-                "*Every analysis run is saved here automatically.*",
-                elem_classes="small-note",
-            )
+            clear_log_btn = gr.Button("🗑  CLEAR LOG", variant="secondary", scale=1, size="sm")
 
-        # ── Disclaimer ───────────────────────────────────────────────────────
-        gr.Markdown(
-            "⚠️ *For educational purposes only — not financial advice.*",
-            elem_classes="center",
-        )
+        gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
 
-        # ── Output list (14 total — order matches run_full_analysis return) ──
+        # ── 10. News ─────────────────────────────────────────
+        gr.Markdown("## GOLD NEWS")
+        news_html = gr.HTML()
+
+        # ── Status bar ───────────────────────────────────────
+        status_box = gr.Textbox(label="STATUS", value="Starting...",
+                                interactive=False, max_lines=1)
+
+        # ── Hidden indicators passthrough ────────────────────
+        indicators_hidden = gr.Textbox(visible=False)
+
+        # ── Output order (14 outputs) ────────────────────────
         outputs = [
-            price_usd, price_thb,
+            price_html, decision_html,
+            last_updated,
             chart,
             rsi_box, macd_box,
-            decision_html,
-            reasoning_box,
-            sharpe_box, drawdown_box, kelly_box,
-            news_box,
-            last_updated,
-            status_box,
+            portfolio_html, equity_chart, outcome_bar,
+            trade_table,
+            news_html,
             log_table,
+            indicators_hidden,
+            status_box,
         ]
 
         run_btn.click(fn=run_full_analysis, inputs=[], outputs=outputs)
         demo.load(fn=run_full_analysis, inputs=[], outputs=outputs)
-        gr.Timer(value=AUTO_REFRESH_SECONDS).tick(
-            fn=run_full_analysis, inputs=[], outputs=outputs
-        )
+        gr.Timer(value=AUTO_REFRESH_SECONDS).tick(fn=run_full_analysis, inputs=[], outputs=outputs)
 
-        # Clear log button — wipes CSV then refreshes the table
-        def _clear_and_reload():
+        # Reset portfolio
+        def _reset():
+            from trader.paper_engine import reset_portfolio, get_portfolio_summary, \
+                                            get_trade_history, get_equity_history, get_recent_outcomes
+            reset_portfolio()
+            p = get_portfolio_summary(0)
+            try:
+                eq = _build_equity_chart(get_equity_history())
+            except Exception:
+                eq = None
+            return (_portfolio_html(p), eq,
+                    _outcome_bar_html(get_recent_outcomes(15)),
+                    _trade_table_html(get_trade_history(20)))
+
+        reset_btn.click(fn=_reset, inputs=[],
+                        outputs=[portfolio_html, equity_chart, outcome_bar, trade_table])
+
+        # Clear log
+        def _clear():
             from logger.trade_log import clear_log, get_recent_logs
             clear_log()
             return get_recent_logs(50)
 
-        clear_btn.click(fn=_clear_and_reload, inputs=[], outputs=[log_table])
+        clear_log_btn.click(fn=_clear, inputs=[], outputs=[log_table])
 
     return demo
 
