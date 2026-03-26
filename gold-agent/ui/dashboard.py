@@ -15,7 +15,7 @@ Layout (top to bottom):
   10. News        — headlines + sentiment badge
 """
 
-import sys, os, json
+import sys, os, json, time
 import numpy as np
 import gradio as gr
 
@@ -27,6 +27,21 @@ import matplotlib.dates as mdates
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 AUTO_REFRESH_SECONDS = 300
+
+# Tracks when the last full analysis ran — used for countdown display
+_last_refresh_time: float = time.time()
+
+
+def _tick_countdown() -> str:
+    """Lightweight 1-second tick — only returns the countdown string."""
+    elapsed   = time.time() - _last_refresh_time
+    remaining = max(0, AUTO_REFRESH_SECONDS - int(elapsed))
+    mins      = remaining // 60
+    secs      = remaining % 60
+    bar_filled = int((elapsed / AUTO_REFRESH_SECONDS) * 20)
+    bar_filled = min(bar_filled, 20)
+    bar = "█" * bar_filled + "░" * (20 - bar_filled)
+    return f"Next auto-refresh in  {mins}:{secs:02d}  [{bar}]"
 
 # ─────────────────────────────────────────────────────────────
 # Dark PNS-style CSS
@@ -445,6 +460,9 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         trade_table_html, news_html_out, log_df,
         indicators_str, status, trade_mode_status_html
     """
+    global _last_refresh_time
+    _last_refresh_time = time.time()   # reset countdown
+
     try:
         # 1. Price
         from data.fetch import get_gold_price, get_fetch_time
@@ -652,6 +670,15 @@ def build_ui() -> gr.Blocks:
             last_updated = gr.Textbox(value="Loading...", interactive=False,
                                       label="", scale=5, max_lines=1)
 
+        # Countdown bar — updated every second by a lightweight timer
+        countdown_box = gr.Textbox(
+            value=_tick_countdown(),
+            label="",
+            interactive=False,
+            max_lines=1,
+            elem_id="countdown-box",
+        )
+
         gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
 
         # ── 4. Chart ─────────────────────────────────────────
@@ -738,10 +765,10 @@ def build_ui() -> gr.Blocks:
             outputs=outputs,
         )
 
-        # Auto-refresh every 5 minutes — timer fires even when idle
+        # Auto-refresh every 5 minutes — runs full analysis
         try:
-            timer = gr.Timer(value=AUTO_REFRESH_SECONDS)
-            timer.tick(
+            analysis_timer = gr.Timer(value=AUTO_REFRESH_SECONDS)
+            analysis_timer.tick(
                 fn=run_full_analysis,
                 inputs=[trade_mode_toggle],
                 outputs=outputs,
@@ -749,6 +776,17 @@ def build_ui() -> gr.Blocks:
         except Exception as e:
             # Fallback: older Gradio builds — warn but don't crash
             print(f"[dashboard] gr.Timer not available ({e}); auto-refresh disabled.")
+
+        # Countdown ticker — fires every 1 second, very lightweight
+        try:
+            countdown_timer = gr.Timer(value=1)
+            countdown_timer.tick(
+                fn=_tick_countdown,
+                inputs=[],
+                outputs=[countdown_box],
+            )
+        except Exception as e:
+            print(f"[dashboard] Countdown timer not available ({e})")
 
         # Toggle change instantly refreshes the banner + dims/lights decision
         trade_mode_toggle.change(
