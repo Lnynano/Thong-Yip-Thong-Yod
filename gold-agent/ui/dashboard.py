@@ -38,9 +38,9 @@ def _tick_countdown() -> str:
     remaining = max(0, AUTO_REFRESH_SECONDS - int(elapsed))
     mins      = remaining // 60
     secs      = remaining % 60
-    bar_filled = int((elapsed / AUTO_REFRESH_SECONDS) * 20)
-    bar_filled = min(bar_filled, 20)
-    bar = "█" * bar_filled + "░" * (20 - bar_filled)
+    filled    = int((elapsed / AUTO_REFRESH_SECONDS) * 20)
+    filled    = min(filled, 20)
+    bar       = "#" * filled + "-" * (20 - filled)   # ASCII-safe, renders in any font
     return f"Next auto-refresh in  {mins}:{secs:02d}  [{bar}]"
 
 # ─────────────────────────────────────────────────────────────
@@ -668,12 +668,12 @@ def build_ui() -> gr.Blocks:
         with gr.Row():
             run_btn      = gr.Button("⟳  REFRESH NOW", variant="primary", scale=1, size="sm")
             last_updated = gr.Textbox(value="Loading...", interactive=False,
-                                      label="", scale=5, max_lines=1)
+                                      show_label=False, scale=5, max_lines=1)
 
         # Countdown bar — updated every second by a lightweight timer
         countdown_box = gr.Textbox(
             value=_tick_countdown(),
-            label="",
+            show_label=False,
             interactive=False,
             max_lines=1,
             elem_id="countdown-box",
@@ -730,7 +730,8 @@ def build_ui() -> gr.Blocks:
         news_html = gr.HTML()
 
         # ── Status bar ───────────────────────────────────────
-        status_box = gr.Textbox(label="STATUS", value="Starting...",
+        status_box = gr.Textbox(label="STATUS  ·  last action",
+                                value="Starting...",
                                 interactive=False, max_lines=1)
 
         # ── Hidden indicators passthrough ────────────────────
