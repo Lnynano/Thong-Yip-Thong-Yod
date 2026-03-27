@@ -213,3 +213,9 @@ analysis_log.csv
 
 # Git worktrees
 .worktrees/
+
+claude.md
+portfolio.json
+.gradio
+
+gold-agent/data/lightrag/
