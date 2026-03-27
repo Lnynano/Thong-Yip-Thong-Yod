@@ -1,8 +1,5 @@
 """Tests for Claude-powered sentiment scoring with keyword fallback."""
-import json
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 def test_claude_returns_bullish():
