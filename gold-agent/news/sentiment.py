@@ -3,10 +3,16 @@ news/sentiment.py
 Fetches gold-related news headlines from NewsAPI.
 Falls back to a rotating pool of mock headlines if the API key is missing,
 so the app always shows different headlines each refresh.
+
+Sentiment scoring uses Claude Haiku for nuanced analysis.
+Falls back to keyword counting if the API call fails.
 """
 
+import json
 import os
 import random
+
+import anthropic
 import requests
 from dotenv import load_dotenv
 
@@ -99,18 +105,8 @@ def get_gold_news(max_headlines: int = 5) -> list[str]:
     return random.sample(MOCK_HEADLINE_POOL, min(max_headlines, len(MOCK_HEADLINE_POOL)))
 
 
-def get_sentiment_summary(headlines: list[str]) -> str:
-    """
-    Generate a rule-based sentiment label from headlines.
-
-    Counts bullish vs bearish keywords across all headlines.
-
-    Args:
-        headlines (list[str]): List of news headline strings.
-
-    Returns:
-        str: "BULLISH", "BEARISH", or "NEUTRAL".
-    """
+def _keyword_sentiment(headlines: list[str]) -> str:
+    """Rule-based fallback: count bullish vs bearish keywords."""
     bullish_kw = [
         "surge", "rise", "gain", "rally", "jump", "soar", "high",
         "demand", "buying", "boost", "positive", "growth", "record", "higher",
@@ -119,16 +115,58 @@ def get_sentiment_summary(headlines: list[str]) -> str:
         "fall", "drop", "decline", "plunge", "crash", "low", "sell",
         "loss", "weakness", "down", "negative", "risk", "pressure", "correction",
     ]
-
     combined = " ".join(headlines).lower()
     bull = sum(combined.count(kw) for kw in bullish_kw)
     bear = sum(combined.count(kw) for kw in bearish_kw)
-
     if bull > bear:
         return "BULLISH"
     elif bear > bull:
         return "BEARISH"
     return "NEUTRAL"
+
+
+def get_sentiment_summary(headlines: list[str]) -> str:
+    """
+    Score gold news sentiment using Claude Haiku.
+
+    Sends headlines to Claude Haiku (temperature=0) and asks for a JSON
+    sentiment label. Falls back to keyword counting if the API key is
+    missing or the call fails.
+
+    Args:
+        headlines (list[str]): List of news headline strings.
+
+    Returns:
+        str: "BULLISH", "BEARISH", or "NEUTRAL".
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        return _keyword_sentiment(headlines)
+
+    try:
+        client = anthropic.Anthropic()
+        headlines_text = "\n".join(f"- {h}" for h in headlines)
+        prompt = (
+            f"Analyze these gold market news headlines:\n{headlines_text}\n\n"
+            "Return JSON only, no other text: "
+            '{"sentiment": "BULLISH" or "BEARISH" or "NEUTRAL", "reasoning": "<1 sentence>"}'
+        )
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=100,
+            temperature=0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        data = json.loads(response.content[0].text)
+        label = data.get("sentiment", "").upper()
+        if label in ("BULLISH", "BEARISH", "NEUTRAL"):
+            print(f"[sentiment.py] Claude sentiment: {label}")
+            return label
+        return _keyword_sentiment(headlines)
+
+    except Exception as e:
+        print(f"[sentiment.py] Claude sentiment failed ({e}). Falling back to keywords.")
+        return _keyword_sentiment(headlines)
 
 
 # Allow standalone testing
