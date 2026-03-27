@@ -52,6 +52,9 @@ body, .gradio-container, .main, .wrap {
     background: #0b0b0b !important;
     color: #c8c8c8 !important;
     font-family: 'Courier New', 'Lucida Console', monospace !important;
+    font-size: 1.0em !important;
+    line-height: 1.5 !important;
+    word-break: break-word !important;
 }
 footer, .built-with { display: none !important; }
 .svelte-1gfkn6j  { display: none !important; }
@@ -67,7 +70,7 @@ footer, .built-with { display: none !important; }
 /* ── Labels ─────────────────────────────────────────── */
 .label-wrap span, label, .gr-label {
     color: #555555 !important;
-    font-size: 0.72em !important;
+    font-size: 0.78em !important;
     letter-spacing: 0.12em !important;
     text-transform: uppercase !important;
     font-family: 'Courier New', monospace !important;
@@ -80,6 +83,7 @@ textarea, input[type=text], .gr-text-input {
     color: #cccccc !important;
     font-family: 'Courier New', monospace !important;
     font-size: 0.95em !important;
+    line-height: 1.5 !important;
 }
 
 /* ── Buttons ─────────────────────────────────────────── */
@@ -93,10 +97,10 @@ button.secondary { background: #1a1a1a !important; color: #666 !important;
 /* ── Dataframe / table ───────────────────────────────── */
 .svelte-table, table, .gr-dataframe table {
     background: #0f0f0f !important; color: #bbb !important;
-    font-size: 0.82em !important; font-family: 'Courier New', monospace !important;
+    font-size: 0.88em !important; font-family: 'Courier New', monospace !important;
 }
 th { background: #161616 !important; color: #555 !important;
-     text-transform: uppercase !important; font-size: 0.72em !important;
+     text-transform: uppercase !important; font-size: 0.78em !important;
      letter-spacing: 0.1em !important; border-bottom: 1px solid #222 !important; }
 td { border-bottom: 1px solid #1a1a1a !important; }
 
@@ -107,69 +111,103 @@ h1, h2, h3 { color: #888 !important; letter-spacing: 0.15em !important;
 
 /* ── Divider ─────────────────────────────────────────── */
 hr { border-color: #1e1e1e !important; }
+
+/* ── Responsive: mobile breakpoint (≤768px) ─────────── */
+@media (max-width: 768px) {
+    .gr-row, .row {
+        flex-direction: column !important;
+        flex-wrap: wrap !important;
+    }
+    .gradio-container {
+        padding: 6px !important;
+    }
+    .block, .panel, fieldset, .gr-box, .gr-form, .gr-panel {
+        padding: 10px !important;
+    }
+}
 """
 
 
 # ─────────────────────────────────────────────────────────────
-# Chart — dark PNS style
+# Charts — dark PNS style (split for mobile tabs)
 # ─────────────────────────────────────────────────────────────
-def _build_chart(df) -> plt.Figure:
-    """90-day price + RSI chart with dark PNS styling."""
+def _build_price_chart(df) -> plt.Figure:
+    """90-day price + SMA20 chart — dark PNS styling, mobile-friendly height."""
     plot_df = df.copy()
     if hasattr(plot_df.index, "tz") and plot_df.index.tz is not None:
         plot_df.index = plot_df.index.tz_localize(None)
 
-    close   = plot_df["Close"]
-    sma20   = close.rolling(20).mean()
-    delta   = close.diff()
-    ag      = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-    al      = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-    rsi_s   = 100 - (100 / (1 + ag / al.replace(0, np.nan)))
+    close = plot_df["Close"]
+    sma20 = close.rolling(20).mean()
+    BG    = "#0b0b0b"
+    LINE  = "#ff7070"
+    SMA_C = "#444444"
 
-    BG      = "#0b0b0b"
-    LINE    = "#ff7070"       # PNS coral/salmon line
-    SMA_C   = "#444444"
-    RSI_C   = "#c9f002"       # lime green RSI line
-    OB_C    = "#cc3333"
-    OS_C    = "#33aa55"
+    fig, ax = plt.subplots(figsize=(12, 3), facecolor=BG)
+    ax.set_facecolor(BG)
+    for spine in ax.spines.values():
+        spine.set_color("#1e1e1e")
+    ax.tick_params(colors="#444", labelsize=8)
+    ax.grid(True, color="#1a1a1a", linewidth=0.6)
+    ax.yaxis.label.set_color("#555")
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6),
-                                    gridspec_kw={"height_ratios": [3, 1]},
-                                    sharex=True, facecolor=BG)
-    for ax in (ax1, ax2):
-        ax.set_facecolor(BG)
-        for spine in ax.spines.values():
-            spine.set_color("#1e1e1e")
-        ax.tick_params(colors="#444", labelsize=8)
-        ax.grid(True, color="#1a1a1a", linewidth=0.6)
-        ax.yaxis.label.set_color("#555")
+    ax.plot(plot_df.index, close, color=LINE, linewidth=1.6, zorder=3)
+    ax.plot(plot_df.index, sma20, color=SMA_C, linewidth=1,
+            linestyle="--", alpha=0.6, zorder=2)
+    ax.fill_between(plot_df.index, close, close.min() * 0.999,
+                    alpha=0.08, color=LINE, zorder=1)
+    ax.set_ylabel("USD / oz", color="#555", fontsize=9)
+    ax.set_title("XAUUSD  —  90D", color="#555", fontsize=9,
+                 loc="left", pad=8, fontfamily="Courier New")
+    ax.annotate(f"  ${float(close.iloc[-1]):,.2f}",
+                xy=(plot_df.index[-1], float(close.iloc[-1])),
+                color=LINE, fontsize=9, fontweight="bold",
+                fontfamily="Courier New")
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+    ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha="right",
+             fontsize=7, color="#444")
 
-    # Price panel
-    ax1.plot(plot_df.index, close, color=LINE, linewidth=1.6, zorder=3)
-    ax1.plot(plot_df.index, sma20, color=SMA_C, linewidth=1, linestyle="--", alpha=0.6, zorder=2)
-    ax1.fill_between(plot_df.index, close, close.min() * 0.999,
-                     alpha=0.08, color=LINE, zorder=1)
-    ax1.set_ylabel("USD / oz", color="#555", fontsize=9)
-    ax1.set_title("XAUUSD  —  90D", color="#555", fontsize=9,
-                  loc="left", pad=8, fontfamily="Courier New")
-    ax1.annotate(f"  ${float(close.iloc[-1]):,.2f}",
-                 xy=(plot_df.index[-1], float(close.iloc[-1])),
-                 color=LINE, fontsize=9, fontweight="bold",
-                 fontfamily="Courier New")
+    plt.tight_layout(pad=1.0)
+    return fig
 
-    # RSI panel
-    ax2.plot(plot_df.index, rsi_s, color=RSI_C, linewidth=1.4, zorder=3)
-    ax2.axhline(70, color=OB_C, linestyle="--", alpha=0.6, linewidth=0.8)
-    ax2.axhline(30, color=OS_C, linestyle="--", alpha=0.6, linewidth=0.8)
-    ax2.fill_between(plot_df.index, rsi_s, 70,
-                     where=(rsi_s >= 70), alpha=0.12, color=OB_C, interpolate=True)
-    ax2.fill_between(plot_df.index, rsi_s, 30,
-                     where=(rsi_s <= 30), alpha=0.12, color=OS_C, interpolate=True)
-    ax2.set_ylabel("RSI 14", color="#555", fontsize=8)
-    ax2.set_ylim(0, 100)
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
-    ax2.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
-    plt.setp(ax2.xaxis.get_majorticklabels(), rotation=30, ha="right",
+
+def _build_rsi_chart(df) -> plt.Figure:
+    """RSI 14 chart — dark PNS styling, mobile-friendly height."""
+    plot_df = df.copy()
+    if hasattr(plot_df.index, "tz") and plot_df.index.tz is not None:
+        plot_df.index = plot_df.index.tz_localize(None)
+
+    close = plot_df["Close"]
+    delta = close.diff()
+    ag    = delta.clip(lower=0).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    al    = (-delta.clip(upper=0)).ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    rsi_s = 100 - (100 / (1 + ag / al.replace(0, np.nan)))
+
+    BG    = "#0b0b0b"
+    RSI_C = "#c9f002"
+    OB_C  = "#cc3333"
+    OS_C  = "#33aa55"
+
+    fig, ax = plt.subplots(figsize=(12, 2), facecolor=BG)
+    ax.set_facecolor(BG)
+    for spine in ax.spines.values():
+        spine.set_color("#1e1e1e")
+    ax.tick_params(colors="#444", labelsize=8)
+    ax.grid(True, color="#1a1a1a", linewidth=0.6)
+
+    ax.plot(plot_df.index, rsi_s, color=RSI_C, linewidth=1.4, zorder=3)
+    ax.axhline(70, color=OB_C, linestyle="--", alpha=0.6, linewidth=0.8)
+    ax.axhline(30, color=OS_C, linestyle="--", alpha=0.6, linewidth=0.8)
+    ax.fill_between(plot_df.index, rsi_s, 70,
+                    where=(rsi_s >= 70), alpha=0.12, color=OB_C, interpolate=True)
+    ax.fill_between(plot_df.index, rsi_s, 30,
+                    where=(rsi_s <= 30), alpha=0.12, color=OS_C, interpolate=True)
+    ax.set_ylabel("RSI 14", color="#555", fontsize=8)
+    ax.set_ylim(0, 100)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+    ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha="right",
              fontsize=7, color="#444")
 
     plt.tight_layout(pad=1.0)
@@ -474,9 +512,9 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         trade_mode: When True, paper trades are executed automatically.
                     When False, analysis runs but NO trades are placed.
 
-    Returns 15 values:
+    Returns 16 values:
         price_html, decision_html_out,
-        last_updated, chart_fig, rsi_str, macd_str,
+        last_updated, price_chart_fig, rsi_chart_fig, rsi_str, macd_str,
         portfolio_html, equity_chart, outcome_bar_html,
         trade_table_html, news_html_out, log_df,
         indicators_str, status, trade_mode_status_html
@@ -495,12 +533,17 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         prev_usd    = float(df["Close"].iloc[-2]) if len(df) > 1 else price_usd
         fetch_time  = get_fetch_time()
 
-        # 2. Chart
+        # 2. Charts (price + RSI — separate figures for mobile tabs)
         try:
-            chart_fig = _build_chart(df)
+            price_chart_fig = _build_price_chart(df)
         except Exception as e:
-            print(f"[dashboard] Chart error: {e}")
-            chart_fig = None
+            print(f"[dashboard] Price chart error: {e}")
+            price_chart_fig = None
+        try:
+            rsi_chart_fig = _build_rsi_chart(df)
+        except Exception as e:
+            print(f"[dashboard] RSI chart error: {e}")
+            rsi_chart_fig = None
 
         # 3. Indicators
         from indicators.tech import calculate_rsi, calculate_macd
@@ -594,7 +637,8 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         return (
             price_block, dec_block,
             last_updated,
-            chart_fig,
+            price_chart_fig,
+            rsi_chart_fig,
             rsi_str, macd_str,
             port_block, eq_chart, outcome_bar,
             trade_table,
@@ -629,6 +673,7 @@ def _error_outputs(msg: str, trade_mode: bool = False) -> tuple:
         f'<div style="color:#cc3333;padding:20px;font-family:Courier New;">{msg}</div>',
         _decision_html("HOLD", 0, msg, trade_mode),
         "Last updated: —",
+        None,
         None,
         "N/A", "N/A",
         port_block, eq_chart, _outcome_bar_html(get_recent_outcomes(15)),
@@ -702,55 +747,47 @@ def build_ui() -> gr.Blocks:
 
         gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
 
-        # ── 4. Chart ─────────────────────────────────────────
-        gr.Markdown("## PRICE  &  RSI")
-        chart = gr.Plot(label="")
+        # ── Tabbed sections ──────────────────────────────────
+        with gr.Tabs():
 
-        # ── 5. Indicators ────────────────────────────────────
-        gr.Markdown("## INDICATORS")
-        with gr.Row():
-            rsi_box  = gr.Textbox(label="RSI (14)", interactive=False)
-            macd_box = gr.Textbox(label="MACD Histogram", interactive=False)
+            with gr.Tab("Charts"):
+                gr.Markdown("## PRICE")
+                chart_price = gr.Plot(label="")
+                gr.Markdown("## RSI")
+                chart_rsi = gr.Plot(label="")
+                gr.Markdown("## INDICATORS")
+                with gr.Row():
+                    rsi_box  = gr.Textbox(label="RSI (14)", interactive=False)
+                    macd_box = gr.Textbox(label="MACD Histogram", interactive=False)
 
-        gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
+            with gr.Tab("Portfolio"):
+                portfolio_html = gr.HTML()
+                gr.Markdown("## P&L CURVE")
+                equity_chart = gr.Plot(label="")
+                with gr.Row():
+                    reset_btn = gr.Button("↺  RESET PORTFOLIO",
+                                         variant="secondary", scale=1, size="sm")
+                    gr.HTML('<div style="color:#333; font-size:0.75em; padding:8px; '
+                            'font-family:Courier New;">Paper trading only — no real money.</div>')
 
-        # ── 6. Portfolio ─────────────────────────────────────
-        gr.Markdown("## PORTFOLIO")
-        portfolio_html = gr.HTML()
+            with gr.Tab("Trades"):
+                outcome_bar = gr.HTML()
+                trade_table = gr.HTML()
 
-        # ── 7. P&L Curve ─────────────────────────────────────
-        gr.Markdown("## P&L CURVE")
-        equity_chart = gr.Plot(label="")
+            with gr.Tab("Log"):
+                log_table = gr.Dataframe(
+                    headers=["Timestamp", "Decision", "Confidence %", "Price USD",
+                             "Price THB (baht-wt)", "RSI", "MACD", "Sharpe", "Reasoning"],
+                    label="", interactive=False, wrap=True,
+                )
+                with gr.Row():
+                    clear_log_btn = gr.Button("🗑  CLEAR LOG",
+                                             variant="secondary", scale=1, size="sm")
 
-        # ── 8. Trade history bar + journal ───────────────────
-        gr.Markdown("## TRADE JOURNAL")
-        outcome_bar  = gr.HTML()
-        trade_table  = gr.HTML()
+            with gr.Tab("News"):
+                news_html = gr.HTML()
 
-        with gr.Row():
-            reset_btn = gr.Button("↺  RESET PORTFOLIO", variant="secondary", scale=1, size="sm")
-            gr.HTML('<div style="color:#333; font-size:0.75em; padding:8px; '
-                    'font-family:Courier New;">Paper trading only — no real money.</div>')
-
-        gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
-
-        # ── 9. Analysis log ──────────────────────────────────
-        gr.Markdown("## ANALYSIS LOG")
-        log_table = gr.Dataframe(
-            headers=["Timestamp", "Decision", "Confidence %", "Price USD",
-                     "Price THB (baht-wt)", "RSI", "MACD", "Sharpe", "Reasoning"],
-            label="", interactive=False, wrap=True,
-        )
-        with gr.Row():
-            clear_log_btn = gr.Button("🗑  CLEAR LOG", variant="secondary", scale=1, size="sm")
-
-        gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
-
-        # ── 10. News ─────────────────────────────────────────
-        gr.Markdown("## GOLD NEWS")
-        news_html = gr.HTML()
-
-        # ── Status bar ───────────────────────────────────────
+        # ── Status bar (outside tabs, always visible) ────────
         status_box = gr.Textbox(label="STATUS  ·  last action",
                                 value="Starting...",
                                 interactive=False, max_lines=1)
@@ -758,11 +795,12 @@ def build_ui() -> gr.Blocks:
         # ── Hidden indicators passthrough ────────────────────
         indicators_hidden = gr.Textbox(visible=False)
 
-        # ── Output order (15 outputs) ────────────────────────
+        # ── Output order (16 outputs) ────────────────────────
         outputs = [
             price_html, decision_html,
             last_updated,
-            chart,
+            chart_price,
+            chart_rsi,
             rsi_box, macd_box,
             portfolio_html, equity_chart, outcome_bar,
             trade_table,
