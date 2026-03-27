@@ -27,10 +27,10 @@ def save_news_to_json():
         "data",
         "news_cache.json"
     )
-
+    
 
     with open(NEWS_FILE, "w") as f:
-        json.dump(news, f, indent=4)
+        json.dump(data, f, indent=4)
 
     print("News saved to JSON")
 

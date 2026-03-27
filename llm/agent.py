@@ -4,10 +4,12 @@ import json
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from data.news_reader import load_cached_news
+##from data.news_reader import load_cached_news
 from indicators.indicators import compute_indicators
 from data.price_memory import get_price_history
 from data.price_memory import split_history
+from data.news_sentiment_reader import load_news_sentiment
+from data.daily_market_reader import load_daily_market
 
 from indicators.trend_features import (
     calculate_slope,
@@ -22,31 +24,31 @@ client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY")
 )
 
+def ask_llm(status):
 
-def format_news(news_list):
+    news = load_news_sentiment()
 
-    combined_text = ""
-
-    for i, news in enumerate(news_list):
-
-        combined_text += (
-            f"{i+1}. {news['title']}\n"
-        )
-
-    return combined_text
-
-
-def ask_llm():
-
-    news = load_cached_news()
+    daily_market = load_daily_market()
 
     indicators = compute_indicators()
 
-    news_text = format_news(news)
+    past_20, recent_10 = split_history()
 
     price_history = get_price_history()
 
-    past_20, recent_10 = split_history()
+    MIN_REQUIRED_MEMORY = 60
+
+    if len(price_history) < MIN_REQUIRED_MEMORY:
+
+        print(
+            f"Waiting for enough data: "
+            f"{len(price_history)}/{MIN_REQUIRED_MEMORY}"
+        )
+
+        return json.dumps({
+            "action": "HOLD",
+            "reason": "Waiting for enough price memory"
+        })
 
     # =========================
     # FEATURE CALCULATION
@@ -136,6 +138,20 @@ def ask_llm():
         sell_bias = "Downtrend Risk"
 
     # =========================
+    # global BIAS CHECK
+    # =========================
+
+    global_bias = "Neutral"
+
+    if daily_market["daily_trend"] == "Uptrend":
+
+        global_bias = "Prefer BUY"
+
+    elif daily_market["daily_trend"] == "Downtrend":
+
+        global_bias = "Prefer SELL"
+
+    # =========================
     # PROMPT
     # =========================
 
@@ -145,6 +161,46 @@ You are an intelligent gold trading AI.
 Your goal is to maximize profit by reacting to market movement.
 
 You should not be afraid to BUY during strong uptrends.
+
+you can hold only 1 gold a time.
+
+you have 2 helper agent there info is very useful
+
+=========================
+
+helper agent NO.1
+Daily Market Overview:
+
+Daily Trend: {daily_market["daily_trend"]}
+Trend Strength: {daily_market["trend_strength"]}
+
+Summary:
+{daily_market["daily_summary"]}
+
+=========================
+
+helper agent NO.2
+News Sentiment:
+
+Sentiment: {news["sentiment"]}
+Confidence: {news["confidence"]}
+
+Reason:
+{news["reason"]}
+
+=========================
+
+CURRENT PORTFOLIO STATUS:
+
+Gold Held: {status["gold"]}
+
+Cash Available: {status["cash"]}
+
+Last Buy Price: {status["last_buy_price"]}
+
+Current Profit (%): {status["profit_percent"]}
+
+Cooldown Remaining: {status["cooldown"]}
 
 =========================
 
@@ -163,9 +219,10 @@ Recent Trend: {recent_trend}
 Recent Slope: {recent_slope}
 Recent Volatility: {recent_volatility}
 Recent Momentum: {recent_momentum}
+20 Recent gold value(from 2min past value to now) : {recent_10}
 
 Past Trend: {past_trend}
-
+40 past gold value(2min ago) : {past_20}
 =========================
 
 Market Bias:
@@ -173,11 +230,7 @@ Market Bias:
 BUY Bias: {market_condition}
 SELL Bias: {sell_bias}
 
-=========================
-
-Recent News:
-
-{news_text}
+Global Bias: {global_bias}
 
 =========================
 
@@ -186,17 +239,55 @@ Trading Strategy:
 1. Buy the Dip:
    If RSI < 45 → Strong BUY opportunity.
 
-2. Trend Following:
-   If BUY Bias is Strong or Moderate
-   AND Trend is UP
-   → BUY is allowed even if RSI is 50–65.
-
-3. Sell Conditions:
+2. Sell Conditions:
    If RSI > 60 → good for SELL.
    If Trend becomes DOWN → Consider SELL.
 
-4. Avoid HOLD too long.
+3. Avoid HOLD too long.
    Trade when signals are meaningful.
+
+=========================
+
+SKILL
+
+TREND FOLLOWING SKILL:
+
+If the market is in an Uptrend
+and price continues to rise steadily:
+
+You are allowed to BUY even if RSI is between 55–65.
+
+Do not wait too long during strong uptrends but it have to be clearly uptrends.
+Strong trends should be followed.
+
+
+
+REBOUND ENTRY SKILL:
+
+If the market was falling
+and then shows a small upward bounce:
+
+This is a possible rebound entry.
+
+Conditions:
+
+Recent Trend was DOWN
+Momentum turns positive
+Price starts increasing again
+
+→ Consider BUY.
+
+
+
+MOMENTUM RIDE SKILL:
+
+If momentum is strong
+and trend is UP:
+
+Prefer HOLD rather than SELL.
+
+Ride the trend longer.
+Do not sell too early.
 
 =========================
 
@@ -207,7 +298,7 @@ Return JSON only:
  "reason": "short explanation"
 }}
 """
-
+    
     response = client.chat.completions.create(
 
         model="gpt-4o-mini",
@@ -226,6 +317,15 @@ Return JSON only:
         }
 
     )
+
+    print("Daily Market Overview:")
+    print(daily_market["daily_trend"])
+    print(daily_market["trend_strength"])
+    print(daily_market["daily_summary"])
+
+    print("price history")
+    print(recent_10)
+    print(past_20)
 
     text = response.choices[0].message.content
 

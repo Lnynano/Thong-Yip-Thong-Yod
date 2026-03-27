@@ -24,8 +24,9 @@ def load_cached_news():
 
     with open(news_file, "r") as f:
 
-        news = json.load(f)
+        data = json.load(f)
 
     print("Loaded news from cache")
 
-    return news
+    # ⭐ จุดสำคัญ
+    return data["news"]

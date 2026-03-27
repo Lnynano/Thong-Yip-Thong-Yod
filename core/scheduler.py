@@ -1,6 +1,10 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.schedulers.blocking import BlockingScheduler
+
 from llm.agent import ask_llm
+from llm.news_agent import analyze_news_sentiment
+from llm.daily_market_agent import analyze_daily_market
+
 from execution.simulator import TradingSimulator
 from indicators.indicators import compute_indicators
 
@@ -25,7 +29,19 @@ def trading_job():
 
     print("\nRunning trading cycle...")
 
-    decision = ask_llm()
+    indicators = compute_indicators()
+
+    if indicators is None:
+
+        print("No indicators available")
+
+        return
+
+    price = indicators["price"]
+
+    status = simulator.get_status(price)
+
+    decision = ask_llm(status)
 
     print("Decision:", decision)
 
@@ -33,22 +49,19 @@ def trading_job():
 
     # ลบ ```json ``` ถ้ามี
     if decision.startswith("```"):
+
         decision = decision.replace("```json", "")
         decision = decision.replace("```", "")
         decision = decision.strip()
 
     decision_data = json.loads(decision)
 
-    indicators = compute_indicators()
-
     simulator.execute_trade(
         decision_data["action"],
-        indicators["price"]
+        price
     )
 
-    simulator.print_status(
-        indicators["price"]
-    )
+    simulator.print_status(price)
 
 
 def start_scheduler():
@@ -76,19 +89,25 @@ def start_scheduler():
     scheduler.add_job(
         trading_job,
         "interval",
-        seconds=30
+        seconds=180
     )
 
     scheduler.add_job(
-        save_news_to_json,
+        news_pipeline,
         "interval",
         hours=3
     )
 
     scheduler.add_job(
+        analyze_daily_market,
+        "interval",
+        hours=1
+    )
+
+    scheduler.add_job(
         collect_price,
         "interval",
-        seconds=3
+        seconds=6
     )
 
     print("\nFetching news at startup...")
@@ -96,6 +115,9 @@ def start_scheduler():
 
     print("\nRunning first cycle immediately...")
     trading_job()
+
+    print("\nRunning daily market analysis at startup...")
+    analyze_daily_market()
 
     is_running = True   # ⭐ สำคัญ
 
@@ -160,3 +182,9 @@ def reset_system():
     initial_capital = None
 
     print("System reset complete")
+
+def news_pipeline():
+
+    save_news_to_json()
+
+    analyze_news_sentiment()

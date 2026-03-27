@@ -23,7 +23,7 @@ class TradingSimulator:
 
         # strategy config
 
-        self.max_gold = 2
+        self.max_gold = 1
 
         self.take_profit = 0.001   # +0.3%
         self.stop_loss = -0.003    # -0.5%
@@ -81,6 +81,12 @@ class TradingSimulator:
         if action == "BUY":
 
             cost = price * amount
+
+            if self.gold > 0:
+
+                print("Already holding gold")
+
+                action = "HOLD"
 
             if self.gold >= self.max_gold:
 
@@ -140,7 +146,7 @@ class TradingSimulator:
 
                     # ⭐ cooldown หลัง SELL
 
-                    self.cooldown = 3
+                    self.cooldown = 2
 
             else:
 
@@ -190,3 +196,22 @@ class TradingSimulator:
             self.gold,
             self.cash
         )
+
+    def get_status(self, current_price):
+
+        profit_percent = 0
+
+        if self.last_buy_price:
+
+            profit_percent = (
+                (current_price - self.last_buy_price)
+                / self.last_buy_price
+            ) * 100
+
+        return {
+            "cash": self.cash,
+            "gold": self.gold,
+            "last_buy_price": self.last_buy_price,
+            "profit_percent": round(profit_percent, 4),
+            "cooldown": self.cooldown
+        }

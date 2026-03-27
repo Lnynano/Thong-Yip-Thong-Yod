@@ -1,6 +1,6 @@
 price_memory = []
 
-MAX_MEMORY = 30
+MAX_MEMORY = 60
 
 
 def add_price(price):
@@ -23,11 +23,12 @@ def split_history():
 
     history = get_price_history()
 
-    if len(history) < 30:
+    if len(history) < 60:
+
         return history, []
 
-    past_20 = history[:20]
+    past_40 = history[:40]
 
-    recent_10 = history[20:]
+    recent_20 = history[40:]
 
-    return past_20, recent_10
+    return past_40, recent_20
