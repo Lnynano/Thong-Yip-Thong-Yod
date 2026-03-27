@@ -100,7 +100,7 @@ button.secondary { background: #1a1a1a !important; color: #666 !important;
     font-size: 0.88em !important; font-family: 'Courier New', monospace !important;
 }
 th { background: #161616 !important; color: #555 !important;
-     text-transform: uppercase !important; font-size: 0.72em !important;
+     text-transform: uppercase !important; font-size: 0.78em !important;
      letter-spacing: 0.1em !important; border-bottom: 1px solid #222 !important; }
 td { border-bottom: 1px solid #1a1a1a !important; }
 
