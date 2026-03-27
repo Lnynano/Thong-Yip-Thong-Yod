@@ -6,3 +6,5 @@ numpy
 matplotlib
 python-dotenv
 requests
+lightrag-hku
+sentence-transformers
