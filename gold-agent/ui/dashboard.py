@@ -52,6 +52,9 @@ body, .gradio-container, .main, .wrap {
     background: #0b0b0b !important;
     color: #c8c8c8 !important;
     font-family: 'Courier New', 'Lucida Console', monospace !important;
+    font-size: 1.0em !important;
+    line-height: 1.5 !important;
+    word-break: break-word !important;
 }
 footer, .built-with { display: none !important; }
 .svelte-1gfkn6j  { display: none !important; }
@@ -67,7 +70,7 @@ footer, .built-with { display: none !important; }
 /* ── Labels ─────────────────────────────────────────── */
 .label-wrap span, label, .gr-label {
     color: #555555 !important;
-    font-size: 0.72em !important;
+    font-size: 0.78em !important;
     letter-spacing: 0.12em !important;
     text-transform: uppercase !important;
     font-family: 'Courier New', monospace !important;
@@ -80,6 +83,7 @@ textarea, input[type=text], .gr-text-input {
     color: #cccccc !important;
     font-family: 'Courier New', monospace !important;
     font-size: 0.95em !important;
+    line-height: 1.5 !important;
 }
 
 /* ── Buttons ─────────────────────────────────────────── */
@@ -93,7 +97,7 @@ button.secondary { background: #1a1a1a !important; color: #666 !important;
 /* ── Dataframe / table ───────────────────────────────── */
 .svelte-table, table, .gr-dataframe table {
     background: #0f0f0f !important; color: #bbb !important;
-    font-size: 0.82em !important; font-family: 'Courier New', monospace !important;
+    font-size: 0.88em !important; font-family: 'Courier New', monospace !important;
 }
 th { background: #161616 !important; color: #555 !important;
      text-transform: uppercase !important; font-size: 0.72em !important;
