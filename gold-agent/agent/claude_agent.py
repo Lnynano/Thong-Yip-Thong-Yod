@@ -259,7 +259,7 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
                 "bullish_catalysts": ["Fed rate cuts", "Geopolitical tensions", "Inflation surge", "USD weakness"],
                 "bearish_catalysts": ["Fed rate hikes", "Strong USD", "Risk-on rally", "Crypto competition"],
             }
-            if historical:
+            if historical and historical.strip():
                 result["historical_context"] = historical
             return json.dumps(result)
 
