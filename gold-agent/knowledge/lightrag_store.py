@@ -6,6 +6,10 @@ Accumulates real news headlines over time and seeds static gold market
 domain knowledge on first run. Exposes two functions used by the
 agent's get_news tool handler.
 
+All LightRAG calls run in a single-threaded executor to avoid conflicts
+with Gradio's asyncio event loop (LightRAG uses loop.run_until_complete
+internally, which raises RuntimeError if called from within a running loop).
+
 Models:
   LLM        : claude-haiku-4-5-20251001 (entity/relation extraction)
   Embeddings : all-MiniLM-L6-v2 via sentence-transformers (384-dim, local)
@@ -13,6 +17,7 @@ Models:
 Storage: data/lightrag/ (persisted alongside portfolio.json)
 """
 
+import concurrent.futures
 import os
 from datetime import datetime
 
@@ -20,8 +25,19 @@ WORKING_DIR   = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "
 SEED_FILE     = os.path.join(os.path.dirname(__file__), "gold_knowledge.txt")
 SEED_SENTINEL = os.path.join(WORKING_DIR, ".seeded")
 
-_rag      = None
-_st_model = None
+_rag              = None
+_st_model         = None
+_anthropic_client = None
+# Single-threaded executor: all LightRAG ops run here, never in Gradio's loop
+_executor         = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="lightrag")
+
+
+def _get_anthropic_client():
+    global _anthropic_client
+    if _anthropic_client is None:
+        import anthropic
+        _anthropic_client = anthropic.Anthropic()
+    return _anthropic_client
 
 
 def _get_st_model():
@@ -33,8 +49,8 @@ def _get_st_model():
 
 
 async def _llm_func(prompt, system_prompt=None, history_messages=None, **kwargs) -> str:
-    import anthropic
-    client = anthropic.Anthropic()
+    # history_messages is provided by LightRAG for multi-turn extraction but not forwarded
+    client = _get_anthropic_client()
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=512,
@@ -90,12 +106,29 @@ def _seed(rag) -> None:
         print(f"[lightrag_store.py] Seeding failed: {e}")
 
 
+def _insert_in_thread(headlines: list[str]) -> None:
+    rag = _get_rag()
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    text = (
+        f"[{timestamp}] Gold market news headlines:\n"
+        + "\n".join(f"- {h}" for h in headlines)
+    )
+    rag.insert(text)
+
+
+def _query_in_thread(question: str) -> str:
+    from lightrag import QueryParam
+    rag = _get_rag()
+    result = rag.query(question, param=QueryParam(mode="hybrid"))
+    return result or ""
+
+
 def insert_headlines(headlines: list[str]) -> None:
     """
     Append news headlines to the knowledge graph.
 
-    Called after every successful news fetch so the graph accumulates
-    real market events over time.
+    Runs in a background thread to avoid conflicts with Gradio's event loop.
+    Silent on any failure.
 
     Args:
         headlines: List of headline strings from get_gold_news().
@@ -103,13 +136,8 @@ def insert_headlines(headlines: list[str]) -> None:
     if not headlines:
         return
     try:
-        rag = _get_rag()
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        text = (
-            f"[{timestamp}] Gold market news headlines:\n"
-            + "\n".join(f"- {h}" for h in headlines)
-        )
-        rag.insert(text)
+        future = _executor.submit(_insert_in_thread, headlines)
+        future.result(timeout=60)
     except Exception as e:
         print(f"[lightrag_store.py] Insert failed: {e}")
 
@@ -118,8 +146,8 @@ def query_gold_context(question: str) -> str:
     """
     Query the knowledge graph for relevant historical and domain context.
 
-    Returns an empty string (not an exception) if LightRAG is unavailable,
-    so the agent degrades gracefully when the store is cold or broken.
+    Runs in a background thread to avoid conflicts with Gradio's event loop.
+    Returns empty string on any failure for graceful degradation.
 
     Args:
         question: Natural language question to query the knowledge graph.
@@ -128,10 +156,8 @@ def query_gold_context(question: str) -> str:
         str: Relevant context text, or "" on failure.
     """
     try:
-        from lightrag import QueryParam
-        rag = _get_rag()
-        result = rag.query(question, param=QueryParam(mode="hybrid"))
-        return result or ""
+        future = _executor.submit(_query_in_thread, question)
+        return future.result(timeout=60)
     except Exception as e:
         print(f"[lightrag_store.py] Query failed: {e}")
         return ""
