@@ -208,3 +208,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+analysis_log.csv
+
+# Git worktrees
+.worktrees/
