@@ -726,55 +726,47 @@ def build_ui() -> gr.Blocks:
 
         gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
 
-        # ── 4. Chart ─────────────────────────────────────────
-        gr.Markdown("## PRICE  &  RSI")
-        chart = gr.Plot(label="")
+        # ── Tabbed sections ──────────────────────────────────
+        with gr.Tabs():
 
-        # ── 5. Indicators ────────────────────────────────────
-        gr.Markdown("## INDICATORS")
-        with gr.Row():
-            rsi_box  = gr.Textbox(label="RSI (14)", interactive=False)
-            macd_box = gr.Textbox(label="MACD Histogram", interactive=False)
+            with gr.Tab("Charts"):
+                gr.Markdown("## PRICE")
+                chart_price = gr.Plot(label="")
+                gr.Markdown("## RSI")
+                chart_rsi = gr.Plot(label="")
+                gr.Markdown("## INDICATORS")
+                with gr.Row():
+                    rsi_box  = gr.Textbox(label="RSI (14)", interactive=False)
+                    macd_box = gr.Textbox(label="MACD Histogram", interactive=False)
 
-        gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
+            with gr.Tab("Portfolio"):
+                portfolio_html = gr.HTML()
+                gr.Markdown("## P&L CURVE")
+                equity_chart = gr.Plot(label="")
+                with gr.Row():
+                    reset_btn = gr.Button("↺  RESET PORTFOLIO",
+                                         variant="secondary", scale=1, size="sm")
+                    gr.HTML('<div style="color:#333; font-size:0.75em; padding:8px; '
+                            'font-family:Courier New;">Paper trading only — no real money.</div>')
 
-        # ── 6. Portfolio ─────────────────────────────────────
-        gr.Markdown("## PORTFOLIO")
-        portfolio_html = gr.HTML()
+            with gr.Tab("Trades"):
+                outcome_bar = gr.HTML()
+                trade_table = gr.HTML()
 
-        # ── 7. P&L Curve ─────────────────────────────────────
-        gr.Markdown("## P&L CURVE")
-        equity_chart = gr.Plot(label="")
+            with gr.Tab("Log"):
+                log_table = gr.Dataframe(
+                    headers=["Timestamp", "Decision", "Confidence %", "Price USD",
+                             "Price THB (baht-wt)", "RSI", "MACD", "Sharpe", "Reasoning"],
+                    label="", interactive=False, wrap=True,
+                )
+                with gr.Row():
+                    clear_log_btn = gr.Button("🗑  CLEAR LOG",
+                                             variant="secondary", scale=1, size="sm")
 
-        # ── 8. Trade history bar + journal ───────────────────
-        gr.Markdown("## TRADE JOURNAL")
-        outcome_bar  = gr.HTML()
-        trade_table  = gr.HTML()
+            with gr.Tab("News"):
+                news_html = gr.HTML()
 
-        with gr.Row():
-            reset_btn = gr.Button("↺  RESET PORTFOLIO", variant="secondary", scale=1, size="sm")
-            gr.HTML('<div style="color:#333; font-size:0.75em; padding:8px; '
-                    'font-family:Courier New;">Paper trading only — no real money.</div>')
-
-        gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
-
-        # ── 9. Analysis log ──────────────────────────────────
-        gr.Markdown("## ANALYSIS LOG")
-        log_table = gr.Dataframe(
-            headers=["Timestamp", "Decision", "Confidence %", "Price USD",
-                     "Price THB (baht-wt)", "RSI", "MACD", "Sharpe", "Reasoning"],
-            label="", interactive=False, wrap=True,
-        )
-        with gr.Row():
-            clear_log_btn = gr.Button("🗑  CLEAR LOG", variant="secondary", scale=1, size="sm")
-
-        gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
-
-        # ── 10. News ─────────────────────────────────────────
-        gr.Markdown("## GOLD NEWS")
-        news_html = gr.HTML()
-
-        # ── Status bar ───────────────────────────────────────
+        # ── Status bar (outside tabs, always visible) ────────
         status_box = gr.Textbox(label="STATUS  ·  last action",
                                 value="Starting...",
                                 interactive=False, max_lines=1)
@@ -782,11 +774,12 @@ def build_ui() -> gr.Blocks:
         # ── Hidden indicators passthrough ────────────────────
         indicators_hidden = gr.Textbox(visible=False)
 
-        # ── Output order (15 outputs) ────────────────────────
+        # ── Output order (16 outputs) ────────────────────────
         outputs = [
             price_html, decision_html,
             last_updated,
-            chart,
+            chart_price,
+            chart_rsi,
             rsi_box, macd_box,
             portfolio_html, equity_chart, outcome_bar,
             trade_table,
