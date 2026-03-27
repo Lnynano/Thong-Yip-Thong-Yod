@@ -237,9 +237,18 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
         # ── Tool: get_news ───────────────────────────────────────────────────
         elif tool_name == "get_news":
             from news.sentiment import get_gold_news, get_sentiment_summary
+            from knowledge.lightrag_store import insert_headlines, query_gold_context
             count = min(int(tool_input.get("count", 5)), 5)
             headlines = get_gold_news(count)
             sentiment = get_sentiment_summary(headlines)
+
+            # Accumulate headlines in knowledge graph
+            insert_headlines(headlines)
+
+            # Query historical and domain context
+            historical = query_gold_context(
+                "What are the key macro drivers and historical patterns for gold price movements?"
+            )
 
             # Structured news
             result = {
@@ -250,6 +259,8 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
                 "bullish_catalysts": ["Fed rate cuts", "Geopolitical tensions", "Inflation surge", "USD weakness"],
                 "bearish_catalysts": ["Fed rate hikes", "Strong USD", "Risk-on rally", "Crypto competition"],
             }
+            if historical:
+                result["historical_context"] = historical
             return json.dumps(result)
 
         else:
