@@ -491,9 +491,9 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         trade_mode: When True, paper trades are executed automatically.
                     When False, analysis runs but NO trades are placed.
 
-    Returns 15 values:
+    Returns 16 values:
         price_html, decision_html_out,
-        last_updated, chart_fig, rsi_str, macd_str,
+        last_updated, price_chart_fig, rsi_chart_fig, rsi_str, macd_str,
         portfolio_html, equity_chart, outcome_bar_html,
         trade_table_html, news_html_out, log_df,
         indicators_str, status, trade_mode_status_html
