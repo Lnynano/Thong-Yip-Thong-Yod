@@ -374,13 +374,34 @@ def _outcome_bar_html(outcomes: list) -> str:
     return f'<div style="padding:8px 0;">{squares}</div>'
 
 
-def _trade_table_html(trades: list) -> str:
-    """HTML trade journal table — PNS style."""
-    if not trades:
+def _trade_table_html(trades: list, open_position: dict | None = None) -> str:
+    """HTML trade journal table — PNS style. Shows open position at top if present."""
+    if not trades and not open_position:
         return '<div style="color:#333; font-size:0.85em; padding:16px; ' \
                'font-family:Courier New,monospace;">No closed trades yet.</div>'
 
     rows = ""
+
+    # ── Open position row (BUY in progress) ──────────────────
+    if open_position:
+        unreal     = open_position.get("unrealized", 0)
+        unreal_pct = open_position.get("unrealized_pct", 0)
+        sign       = "+" if unreal >= 0 else ""
+        unreal_col = "#c9f002" if unreal >= 0 else "#cc3333"
+        entry_d    = open_position.get("entry_time", "")[:16]
+        rows += f"""
+        <tr style="background:#0d1a0d; border-left:3px solid #c9f002;">
+          <td style="color:#c9f002; padding:6px 10px; font-size:0.8em;">{entry_d}</td>
+          <td style="color:#c9f002; font-weight:700; padding:6px 10px;">OPEN ▶</td>
+          <td style="color:#aaa; padding:6px 10px;">฿{open_position['entry_price']:,.0f}</td>
+          <td style="color:#444; padding:6px 10px;">—</td>
+          <td style="color:#777; padding:6px 10px;">{open_position['size_bw']:.5f} bw</td>
+          <td style="color:{unreal_col}; font-weight:700; padding:6px 10px;">
+            {sign}฿{unreal:,.2f} ({sign}{unreal_pct:.2f}%)
+          </td>
+        </tr>"""
+
+    # ── Closed trade rows ─────────────────────────────────────
     for t in trades:
         oc    = "#c9f002" if t["outcome"] == "WIN" else "#cc3333"
         sign  = "+" if t["pnl_thb"] >= 0 else ""
@@ -552,7 +573,7 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         dec_block    = _decision_html(decision, confidence, reasoning, trade_mode)
         port_block   = _portfolio_html(portfolio)
         outcome_bar  = _outcome_bar_html(outcomes)
-        trade_table  = _trade_table_html(trades)
+        trade_table  = _trade_table_html(trades, portfolio.get("open_position"))
         last_updated = f"Last updated: {fetch_time}  ·  auto-refresh every 5 min"
         tm_html      = _trade_mode_html(trade_mode)
 
@@ -611,7 +632,7 @@ def _error_outputs(msg: str, trade_mode: bool = False) -> tuple:
         None,
         "N/A", "N/A",
         port_block, eq_chart, _outcome_bar_html(get_recent_outcomes(15)),
-        _trade_table_html(get_trade_history(20)),
+        _trade_table_html(get_trade_history(20), portfolio.get("open_position")),
         f'<div style="color:#555;padding:16px;">{msg}</div>',
         get_recent_logs(50),
         "—",
@@ -808,7 +829,7 @@ def build_ui() -> gr.Blocks:
                 eq = None
             return (_portfolio_html(p), eq,
                     _outcome_bar_html(get_recent_outcomes(15)),
-                    _trade_table_html(get_trade_history(20)))
+                    _trade_table_html(get_trade_history(20), p.get("open_position")))
 
         reset_btn.click(fn=_reset, inputs=[],
                         outputs=[portfolio_html, equity_chart, outcome_bar, trade_table])
