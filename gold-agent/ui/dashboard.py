@@ -111,6 +111,20 @@ h1, h2, h3 { color: #888 !important; letter-spacing: 0.15em !important;
 
 /* ── Divider ─────────────────────────────────────────── */
 hr { border-color: #1e1e1e !important; }
+
+/* ── Responsive: mobile breakpoint (≤768px) ─────────── */
+@media (max-width: 768px) {
+    .gr-row, .row {
+        flex-direction: column !important;
+        flex-wrap: wrap !important;
+    }
+    .gradio-container {
+        padding: 6px !important;
+    }
+    .block, .panel, fieldset, .gr-box, .gr-form, .gr-panel {
+        padding: 10px !important;
+    }
+}
 """
 
 
