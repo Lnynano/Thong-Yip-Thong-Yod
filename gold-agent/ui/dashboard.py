@@ -692,7 +692,7 @@ def _error_outputs(msg: str, trade_mode: bool = False) -> tuple:
 def build_ui() -> gr.Blocks:
     """Build and return the PNS-style Gradio dashboard."""
 
-    with gr.Blocks(title="Thong Yip Thong Yod", theme=gr.themes.Base(), css=PNS_CSS) as demo:
+    with gr.Blocks(title="Thong Yip Thong Yod") as demo:
 
         # ── Header ──────────────────────────────────────────
         gr.HTML("""
@@ -885,4 +885,4 @@ def build_ui() -> gr.Blocks:
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    build_ui().launch(server_name="0.0.0.0", server_port=port, share=False)
+    build_ui().launch(server_name="0.0.0.0", server_port=port, share=False, theme=gr.themes.Base(), css=PNS_CSS)
