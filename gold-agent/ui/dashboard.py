@@ -884,4 +884,5 @@ def build_ui() -> gr.Blocks:
 
 
 if __name__ == "__main__":
-    build_ui().launch(server_port=7860, share=False)
+    port = int(os.environ.get("PORT", 7860))
+    build_ui().launch(server_name="0.0.0.0", server_port=port, share=False)
