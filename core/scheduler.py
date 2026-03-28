@@ -1,179 +1,372 @@
-import json
-from datetime import datetime
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.blocking import BlockingScheduler
 
-# LLM & Agent Imports
 from llm.agent import ask_llm
 from llm.news_agent import analyze_news_sentiment
 from llm.daily_market_agent import analyze_daily_market
 
-# Execution & Data Imports
 from execution.simulator import TradingSimulator
 from indicators.indicators import compute_indicators
-from data.news_fetcher import save_news_to_json
-from data.price_memory import add_price
 
-# Global Instances
+from data.news_fetcher import save_news_to_json
+
+from data.price_memory import add_price
+from data.price_memory import get_price_history
+
+from data.price import fetch_gold_price
+
+import json
+from datetime import datetime
+
+last_price = None
+
 simulator = TradingSimulator()
+
 scheduler = None
 is_running = False
 initial_capital = None
 
-# --- CORE TRADING LOGIC ---
 
+# ===============================
+# CORE TRADING LOGIC
+# ===============================
 
 def trading_job():
-    """Main loop that executes the research-based strategy."""
+
     now = datetime.now()
 
-    # --- RULE #6: THE KILL SWITCH (April 27) ---
-    if now.month == 4 and now.day == 27:
-        print("🔴 PROJECT FINAL DAY: LIQUIDATING ALL POSITIONS.")
-        status = simulator.get_status(0)
-        if status['gold'] > 0:
-            simulator.execute_trade("SELL", status['price'])
-        stop_scheduler()
-        return
+    print(
+        f"\n[{now.strftime('%H:%M:%S')}] "
+        "Running trading cycle..."
+    )
 
-    print(f"\n[{now.strftime('%H:%M:%S')}] Running Research-Based Cycle...")
-
-    # 1. Fetch Price & Indicators
     indicators = compute_indicators()
+
     if indicators is None:
-        print("⚠️ No indicators available yet. Skipping...")
+
+        print("⚠️ No indicators available")
+
         return
 
     price = indicators["price"]
-    rsi = indicators.get("rsi", 50)
 
-    # 2. Get Portfolio Status
+    # ===========================
+    # Portfolio Status
+    # ===========================
+
     status = simulator.get_status(price)
 
-    # 3. Check Rule #4: How many trades today?
+    # ===========================
+    # Count trades today ⭐
+    # ===========================
+
     trades_today = simulator.get_trades_today_count()
 
+    status["trades_today"] = trades_today
+
+    # ===========================
+    # First trade bias ⭐
+    # ===========================
+
+    if trades_today == 0:
+
+        print(
+            "🧠 First Trade Mode Active"
+        )
+
+        status["first_trade_bias"] = True
+
+    else:
+
+        status["first_trade_bias"] = False
+
+    # ===========================
+    # Ask LLM
+    # ===========================
+
     try:
-        # 4. Get LLM Decision
-        decision_raw = ask_llm(status)
-        decision_data = json.loads(decision_raw.strip().replace(
-            "```json", "").replace("```", ""))
-        action = decision_data["action"].upper()
 
-        # 5. Apply Research & Constraints
+        decision = ask_llm(status)
 
-        # --- NEW: INSTANT ACTION LOGIC FOR RULE #4 ---
-        # If we haven't traded yet today, we IGNORE "HOLD" and act immediately
-        if trades_today == 0:
+        print("Raw Decision:", decision)
+
+        decision = decision.strip()
+
+        # Clean markdown json
+
+        if decision.startswith("```"):
+
+            decision = (
+                decision
+                .replace("```json", "")
+                .replace("```", "")
+                .strip()
+            )
+
+        decision_data = json.loads(
+            decision
+        )
+
+        action = decision_data[
+            "action"
+        ].upper()
+
+        reason = decision_data.get(
+            "reason",
+            "No reason"
+        )
+
+        print(
+            f"🧠 Decision: {action}"
+        )
+
+        print(
+            f"📝 Reason: {reason}"
+        )
+
+        # ===========================
+        # Soft Constraints ⭐
+        # ===========================
+
+        if (
+            action == "BUY"
+            and status["cash"] < 1000
+        ):
+
             print(
-                "📢 INITIAL STARTUP: No trades found for today. Forcing immediate decision...")
-            if status['cash'] >= 1000:
-                action = "BUY"
-                print(
-                    "➡️ Rule #4 Override: Forcing BUY (฿1,000) to satisfy daily trade requirement.")
-            elif status['gold'] > 0:
-                action = "SELL"
-                print(
-                    "➡️ Rule #4 Override: Forcing SELL to satisfy daily trade requirement.")
-            else:
-                print("⚠️ Nothing to trade (No cash and no gold).")
-                action = "HOLD"
+                "⚠️ BUY rejected "
+                "(cash too low)"
+            )
 
-        # Standard constraint for subsequent runs
-        elif action == "BUY" and status['cash'] < 1000:
-            print("⚠️ Suggestion was BUY, but Cash < ฿1,000. Overriding to HOLD.")
             action = "HOLD"
 
-        # 6. Execute Action
-        if action != "HOLD":
-            # This triggers the simulator to save the trade to the DB
-            simulator.execute_trade(action, price)
-            print(f"✅ ACTION TAKEN: {action} at ฿{price:,.2f}")
+        if (
+            action == "SELL"
+            and status["gold"] <= 0
+        ):
+
             print(
-                "🔔 MANUAL ACTION REQUIRED: Please perform this trade in your Aom NOW app!")
+                "⚠️ SELL rejected "
+                "(no gold)"
+            )
+
+            action = "HOLD"
+
+        # ===========================
+        # Execute Trade
+        # ===========================
+
+        if action != "HOLD":
+
+            simulator.execute_trade(
+                action,
+                price
+            )
+
+            print(
+                f"✅ EXECUTED "
+                f"{action} @ {price}"
+            )
+
         else:
-            print("😴 ACTION: HOLD (Daily requirement already met / No signals)")
+
+            print("😴 HOLD")
 
         simulator.print_status(price)
 
     except Exception as e:
-        print(f"❌ Error in decision processing: {e}")
 
-# --- SCHEDULER CONTROLS ---
+        print(
+            f"❌ Decision Error: {e}"
+        )
 
+
+# ===============================
+# PRICE COLLECTION
+# ===============================
+
+from core.mode_controller import (
+    get_mode,
+    get_next_test_price,
+    load_test_data
+)
+
+from core.mode_controller import (
+    get_mode,
+    get_next_test_price
+)
+
+def collect_price():
+
+    mode = get_mode()
+
+    if mode == "TEST":
+
+        price = get_next_test_price()
+
+        if price is None:
+
+            print("No test price")
+
+            return
+
+    else:
+
+        indicators = compute_indicators()
+
+        price = indicators["price"]
+
+    add_price(price)
+
+    print("📈 Price collected:", price)
+
+
+# ===============================
+# NEWS PIPELINE
+# ===============================
+
+def news_pipeline():
+
+    save_news_to_json()
+
+    analyze_news_sentiment()
+
+
+# ===============================
+# SCHEDULER CONTROL
+# ===============================
+
+from core.mode_controller import get_time_config
 
 def start_scheduler():
-    global scheduler, is_running, initial_capital
+
+    global scheduler
+    global is_running
+    global initial_capital
+
+    config = get_time_config()
+
+    price_interval = config["price_interval"]
+    trade_interval = config["trade_interval"]
 
     if is_running:
+
         print("Scheduler already running")
+
         return
 
     from database.db import get_latest_portfolio
+
     portfolio = get_latest_portfolio()
+
     initial_capital = portfolio["total_value"]
 
-    print(f"🚀 Starting scheduler with Capital: ฿{initial_capital:,.2f}")
+    print(
+        "🚀 Initial Capital:",
+        initial_capital
+    )
 
-    scheduler = BackgroundScheduler()
+    scheduler = BlockingScheduler()
 
-    # Job Timings
-    scheduler.add_job(trading_job, "interval",
-                      seconds=180)     # Trade every 3 mins
-    scheduler.add_job(news_pipeline, "interval",
-                      hours=3)      # News every 3 hours
-    scheduler.add_job(analyze_daily_market, "interval",
-                      hours=1)  # Market analysis
-    scheduler.add_job(collect_price, "interval",
-                      seconds=6)    # Price collection
+    scheduler.add_job(
+        collect_price,
+        "interval",
+        seconds=price_interval
+    )
 
-    scheduler.start()
+    scheduler.add_job(
+        trading_job,
+        "interval",
+        seconds=trade_interval
+    )
+
+
+    scheduler.add_job(
+        news_pipeline,
+        "interval",
+        hours=3
+    )
+
+    scheduler.add_job(
+        analyze_daily_market,
+        "interval",
+        hours=1
+    )
+
+    print("\nFetching news at startup...")
+    save_news_to_json()
+
+    print("\nRunning first cycle...")
+    trading_job()
+
+    print("\nRunning daily market analysis...")
+    analyze_daily_market()
+
     is_running = True
 
-    # Initial Run
-    print("\n⚡ Running initial startup cycle...")
-    save_news_to_json()
-    trading_job()
+    import threading
+
+    thread = threading.Thread(
+        target=scheduler.start
+    )
+
+    thread.daemon = True
+    thread.start()
 
 
 def stop_scheduler():
-    global scheduler, is_running
+
+    global scheduler
+    global is_running
+
     if scheduler:
+
         scheduler.shutdown()
+
         print("🛑 Scheduler stopped")
+
     is_running = False
 
 
 def reset_system():
-    global scheduler, is_running, initial_capital
+
+    global scheduler
+    global is_running
+    global initial_capital
+
     from database.db import reset_database
 
-    if scheduler and scheduler.running:
-        scheduler.shutdown(wait=False)
-        print("Scheduler stopped for reset.")
+    if scheduler:
+
+        scheduler.shutdown()
+
+        print("Scheduler stopped")
 
     is_running = False
+
     reset_database()
+
     initial_capital = None
+
     print("♻️ System reset complete")
 
-# --- UTILITY FUNCTIONS ---
 
+from core.mode_controller import (
+    set_mode,
+    load_test_data
+)
 
-def collect_price():
-    indicators = compute_indicators()
-    if indicators:
-        price = indicators["price"]
-        add_price(price)
-        print(f"📈 Collected Thai Gold Price: ฿{price:,.2f}")
-    else:
-        print("⚠️ Price collection failed (Market closed or API error)")
+def start_test_mode():
 
+    global scheduler
+    global is_running
 
-def news_pipeline():
-    save_news_to_json()
-    analyze_news_sentiment()
+    print("🧪 Starting TEST MODE")
 
+    stop_scheduler()
 
-def is_late_night():
-    """Returns True if it is currently 8:00 PM (20:00) or later."""
-    return datetime.now().hour >= 20
+    set_mode("TEST")
+
+    # ⭐ โหลด data ก่อน
+    load_test_data()
+
+    start_scheduler()

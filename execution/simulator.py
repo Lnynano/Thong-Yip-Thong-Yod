@@ -9,98 +9,181 @@ class TradingSimulator:
 
     def __init__(self):
 
+        # เงินเริ่มต้น
         self.cash = 1500.0
-        self.gold = 0
-        self.last_buy_price = None
-        self.cooldown = 0
-        self.max_gold = 2
 
+        # ถือทอง (fractional)
+        self.gold = 0.0
+
+        # ราคาที่ซื้อ
+        self.last_buy_price = None
+
+        # cooldown
+        self.cooldown = 0
+
+        # ⭐ ซื้อครั้งละ 1000 เท่านั้น
+        self.investment_per_trade = 1000.0
+
+        # TP / SL
         self.take_profit = 0.005   # +0.5%
-        self.stop_loss = -0.01     # -1.0%
+        self.stop_loss = -0.01     # -1%
 
     # =========================
 
     def execute_trade(self, action, price):
-        if price is None or price == 0:
-            print("Simulator received invalid price. Skipping cycle.")
+
+        if price is None or price <= 0:
+
+            print("Invalid price")
+
             return
 
-        # --- FIX: Set a fixed THB amount for Aom NOW ---
-        investment_thb = 1000.0
-        # Use local time for easier DB reading
-        current_time = datetime.now().isoformat()
+        current_time = datetime.utcnow().isoformat()
 
         # =========================
-        # COOLDOWN LOGIC
+        # COOLDOWN
         # =========================
+
         if self.cooldown > 0:
+
             self.cooldown -= 1
-            print(f"Cooldown active ({self.cooldown} cycles left)")
+
+            print("Cooldown active")
+
             action = "HOLD"
 
         # =========================
-        # AUTO SELL LOGIC (Research-based)
+        # AUTO TP / SL
         # =========================
+
         if self.gold > 0 and self.last_buy_price:
-            change = (price - self.last_buy_price) / self.last_buy_price
+
+            change = (
+                price - self.last_buy_price
+            ) / self.last_buy_price
+
             if change >= self.take_profit:
-                print(f"📈 Take Profit Triggered (+{change*100:.2f}%)")
+
+                print("📈 Take Profit Triggered")
+
                 action = "SELL"
+
             elif change <= self.stop_loss:
-                print(f"📉 Stop Loss Triggered ({change*100:.2f}%)")
+
+                print("📉 Stop Loss Triggered")
+
                 action = "SELL"
 
         # =========================
-        # BUY (฿1,000 Fixed Amount)
+        # BUY (only if NO gold)
         # =========================
-        if action == "BUY":
-            if self.cash >= investment_thb:
-                # Calculate gold fraction: 1000 / price_per_baht
-                gold_gained = investment_thb / price
 
-                self.cash -= investment_thb
-                self.gold += gold_gained
+        if action == "BUY":
+
+            # ⭐ ถ้ามีทองอยู่แล้ว → ห้ามซื้อเพิ่ม
+
+            if self.gold > 0:
+
+                print("Already holding gold → HOLD")
+
+                action = "HOLD"
+
+            elif self.cash >= self.investment_per_trade:
+
+                gold_bought = (
+                    self.investment_per_trade
+                    / price
+                )
+
+                self.cash -= self.investment_per_trade
+
+                self.gold += gold_bought
+
                 self.last_buy_price = price
 
                 print(
-                    f"✅ BUY executed: Spent ฿{investment_thb} for {gold_gained:.4f} Gold")
+                    f"✅ BUY executed → "
+                    f"{gold_bought:.6f} gold"
+                )
 
-                save_trade(current_time, "BUY", price, self.gold, self.cash)
+                save_trade(
+                    current_time,
+                    "BUY",
+                    price,
+                    self.gold,
+                    self.cash
+                )
+
+                return
+
             else:
-                print(
-                    f"❌ Not enough cash (Need ฿{investment_thb}, have ฿{self.cash})")
+
+                print("Not enough cash → HOLD")
+
+                action = "HOLD"
 
         # =========================
-        # SELL (Sell All Gold)
+        # SELL
         # =========================
-        elif action == "SELL":
+
+        if action == "SELL":
+
             if self.gold > 0:
-                revenue = self.gold * price
+
+                revenue = (
+                    self.gold * price
+                )
+
                 self.cash += revenue
 
-                print(f"✅ SELL executed: Sold gold for ฿{revenue:.2f}")
+                print(
+                    f"✅ SELL executed → "
+                    f"{revenue:.2f} THB"
+                )
 
                 self.gold = 0
+
                 self.last_buy_price = None
-                self.cooldown = 2  # Prevent immediate re-entry
 
-                save_trade(current_time, "SELL", price, self.gold, self.cash)
+                self.cooldown = 2
+
+                save_trade(
+                    current_time,
+                    "SELL",
+                    price,
+                    self.gold,
+                    self.cash
+                )
+
+                return
+
             else:
-                print("❌ No gold to sell")
+
+                print("No gold to sell → HOLD")
+
+                action = "HOLD"
 
         # =========================
-        # HOLD
+        # HOLD (always fallback)
         # =========================
-        elif action == "HOLD":
-            print("😴 HOLD position")
-            # We don't usually save HOLDs to the trade table to keep it clean,
-            # but we save it to the portfolio table via print_status below.
+
+        print("😴 HOLD")
+
+        save_trade(
+            current_time,
+            "HOLD",
+            price,
+            self.gold,
+            self.cash
+        )
 
     # =========================
 
     def portfolio_value(self, price):
 
-        return self.cash + (self.gold * price)
+        return self.cash + (
+            self.gold * price
+        )
 
     # =========================
 
@@ -112,11 +195,11 @@ class TradingSimulator:
 
         print("Cash:", self.cash)
 
-        print("Gold:", self.gold)
+        print("Gold:", round(self.gold, 6))
 
-        print("Total Value:", total)
+        print("Total Value:", round(total, 2))
 
-        current_time = datetime.now().isoformat()
+        current_time = datetime.utcnow().isoformat()
 
         save_portfolio(
             current_time,
@@ -124,6 +207,8 @@ class TradingSimulator:
             self.gold,
             self.cash
         )
+
+    # =========================
 
     def get_status(self, current_price):
 
@@ -137,42 +222,22 @@ class TradingSimulator:
             ) * 100
 
         return {
+
             "cash": self.cash,
+
             "gold": self.gold,
+
             "last_buy_price": self.last_buy_price,
-            "profit_percent": round(profit_percent, 4),
+
+            "profit_percent":
+                round(profit_percent, 4),
+
             "cooldown": self.cooldown
+
         }
 
+    # =========================
+
     def get_trades_today_count(self):
-        """
-        Connects to the database and counts how many trades 
-        have been recorded for the current date.
-        """
-        import sqlite3
-        from datetime import datetime
-        import os
 
-        # Point to your database path
-        # Adjust this path if your simulator.py is in a different subfolder
-        db_path = os.path.join(os.path.dirname(
-            os.path.dirname(__file__)), "database", "trading.db")
-
-        try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-
-            # Get current date in YYYY-MM-DD format
-            today = datetime.now().strftime('%Y-%m-%d')
-
-            # Query to count trades that happened today
-            # We use 'LIKE' because your 'time' column is likely a full timestamp string
-            cursor.execute(
-                "SELECT COUNT(*) FROM trades WHERE time LIKE ?", (f"{today}%",))
-            count = cursor.fetchone()[0]
-
-            conn.close()
-            return count
-        except Exception as e:
-            print(f"Error counting daily trades: {e}")
-            return 0
+        return 0

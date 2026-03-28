@@ -108,40 +108,122 @@ def save_portfolio(time, total_value, gold, cash):
     conn.close()
 
 
-def get_latest_portfolio():
+# ⭐ เพิ่มอันนี้
+
+def get_recent_trades():
+
     conn = sqlite3.connect(DB_PATH)
+
     cursor = conn.cursor()
 
-    # Safety: check if table exists before querying
-    cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='portfolio'")
-    if not cursor.fetchone():
-        conn.close()
-        return {"total_value": 1500.0}  # New Thai Capital
+    cursor.execute("""
 
-    cursor.execute(
-        "SELECT total_value FROM portfolio ORDER BY id DESC LIMIT 1")
+        SELECT time,
+               action,
+               price,
+               gold,
+               cash
+
+        FROM trades
+
+        ORDER BY id DESC
+
+        LIMIT 100
+
+    """)
+
+    rows = cursor.fetchall()
+
+    conn.close()
+
+    return rows[::-1]
+
+
+# ⭐ เพิ่มอันนี้
+
+def get_portfolio_history():
+
+    conn = sqlite3.connect(DB_PATH)
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+
+        SELECT time,
+               total_value
+
+        FROM portfolio
+
+        ORDER BY id ASC
+
+        LIMIT 100
+
+    """)
+
+    rows = cursor.fetchall()
+
+    conn.close()
+
+    times = []
+    values = []
+
+    for row in rows:
+
+        times.append(row[0])
+
+        values.append(row[1])
+
+    return times, values
+
+
+def get_latest_portfolio():
+
+    conn = sqlite3.connect(DB_PATH)
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+
+        SELECT total_value
+
+        FROM portfolio
+
+        ORDER BY id DESC
+
+        LIMIT 1
+
+    """)
+
     row = cursor.fetchone()
+
     conn.close()
 
     if row:
+
         return {"total_value": row[0]}
 
-    return {"total_value": 1500.0}  # Return 100k if empty
+    return {"total_value": 10000}
 
 
 def reset_database():
+
     conn = sqlite3.connect(DB_PATH)
+
     cursor = conn.cursor()
 
-    # Clear everything
-    cursor.execute("DROP TABLE IF EXISTS trades")
-    cursor.execute("DROP TABLE IF EXISTS portfolio")
+    cursor.execute("DELETE FROM trades")
+
+    cursor.execute("DELETE FROM portfolio")
+
+    cursor.execute(
+        "DELETE FROM sqlite_sequence WHERE name='trades'"
+    )
+
+    cursor.execute(
+        "DELETE FROM sqlite_sequence WHERE name='portfolio'"
+    )
 
     conn.commit()
     conn.close()
 
-    # Re-initialize the structure so the tables EXIST (but are empty)
-    init_db()
-
-    print("Database reset and tables recreated.")
+    print("Database reset complete")

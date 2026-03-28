@@ -29,6 +29,8 @@ def analyze_daily_market():
     prompt = f"""
 You are a professional gold market analyst.
 
+You trade in thai gold.
+
 Analyze the past 24 hours of gold prices.
 
 Prices:

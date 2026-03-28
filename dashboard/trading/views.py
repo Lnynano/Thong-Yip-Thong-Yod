@@ -1,90 +1,207 @@
 import sqlite3
 import json
 import os
+
+from django.shortcuts import render, redirect
+
 import core.scheduler as scheduler
-from django.shortcuts import render, redirect  # Added redirect
+
 from database.db import init_db
 
-# Build path to the database
-BASE_DIR = os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))))
-DB_PATH = os.path.join(BASE_DIR, "database", "trading.db")
+from core.mode_controller import (
+    set_mode,
+    get_mode
+)
 
+from core.scheduler import (
+    start_test_mode,
+    stop_scheduler,
+    start_scheduler
+)
+
+
+# =========================
+# DATABASE PATH
+# =========================
+
+BASE_DIR = os.path.dirname(
+    os.path.dirname(
+        os.path.dirname(
+            os.path.abspath(__file__)
+        )
+    )
+)
+
+DB_PATH = os.path.join(
+    BASE_DIR,
+    "database",
+    "trading.db"
+)
+
+
+# =========================
+# DASHBOARD VIEW
+# =========================
 
 def dashboard_view(request):
-    trades = []
-    times = []
-    values = []
 
-    # ✅ Fixed: Capital set to 1,500 to match your simulator
-    START_CAPITAL = 1500.0
+    conn = sqlite3.connect(DB_PATH)
 
-    current_cash = START_CAPITAL
-    current_gold = 0.0
-    last_price = 0.0
+    cursor = conn.cursor()
 
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+    # =========================
+    # LOAD TRADES
+    # =========================
 
-        # 1. Get Trades (Showing all 5 columns: time, action, price, gold, cash)
-        cursor.execute(
-            "SELECT time, action, price, gold, cash FROM trades ORDER BY id DESC LIMIT 20")
-        trades = cursor.fetchall()
+    cursor.execute("""
+        SELECT time, action, price, gold, cash
+        FROM trades
+        ORDER BY id DESC
+        LIMIT 50
+    """)
 
-        # 2. Get Portfolio History for Chart
-        cursor.execute(
-            "SELECT time, total_value, gold, cash FROM portfolio ORDER BY id ASC")
-        portfolio_data = cursor.fetchall()
+    trades = cursor.fetchall()
 
-        if portfolio_data:
-            # We don't json.dumps here because we use |safe in HTML
-            times = [p[0] for p in portfolio_data]
-            values = [p[1] for p in portfolio_data]
+    # =========================
+    # LOAD PORTFOLIO
+    # =========================
 
-            latest_entry = portfolio_data[-1]
-            current_gold = latest_entry[2]
-            current_cash = latest_entry[3]
+    cursor.execute("""
+        SELECT time, total_value
+        FROM portfolio
+        ORDER BY id ASC
+        LIMIT 500
+    """)
 
-        if trades:
-            last_price = trades[0][2]
+    portfolio = cursor.fetchall()
 
-        conn.close()
-    except Exception as e:
-        print(f"Database error: {e}")
+    conn.close()
 
-    # Profit Calculation
-    latest_total_value = values[-1] if values else START_CAPITAL
-    profit = latest_total_value - START_CAPITAL
-    profit_percent = ((latest_total_value / START_CAPITAL) - 1) * 100
+    times = [p[0] for p in portfolio]
+    values = [p[1] for p in portfolio]
+
+    # =========================
+    # PROFIT CALCULATION
+    # =========================
+
+    START_CAPITAL = 1500
+
+    latest_value = (
+        values[-1]
+        if values
+        else START_CAPITAL
+    )
+
+    profit = latest_value - START_CAPITAL
+
+    profit_percent = (
+        (latest_value / START_CAPITAL - 1)
+        * 100
+    )
+
+    # =========================
+    # CURRENT MODE
+    # =========================
+
+    current_mode = get_mode()
+
+    # =========================
+    # CONTEXT
+    # =========================
 
     context = {
+
         "trades": trades,
-        "times": times,  # Send list directly
-        "values": values,  # Send list directly
+
+        "times": json.dumps(times),
+
+        "values": json.dumps(values),
+
         "status": scheduler.is_running,
-        "cash": current_cash,
-        "gold": current_gold,
-        "last_price": last_price,
-        "total_value": latest_total_value,
+
         "profit": profit,
-        "profit_percent": round(profit_percent, 2),
+
+        "profit_percent": profit_percent,
+
+        "mode": current_mode
+
     }
-    return render(request, "dashboard.html", context)
 
-# ✅ FIXED: Use redirect so the URL goes back to '/'
+    return render(
+        request,
+        "dashboard.html",
+        context
+    )
 
+
+# =========================
+# START BOT
+# =========================
 
 def start_bot(request):
-    scheduler.start_scheduler()
-    return redirect('/')
 
+    print("🚀 Starting Bot")
+
+    init_db()
+
+    start_scheduler()
+
+    return redirect("/")
+
+
+# =========================
+# STOP BOT
+# =========================
 
 def stop_bot(request):
-    scheduler.stop_scheduler()
-    return redirect('/')
 
+    print("⛔ Stopping Bot")
+
+    stop_scheduler()
+
+    return redirect("/")
+
+
+# =========================
+# RESET BOT
+# =========================
 
 def reset_bot(request):
+
+    print("🔄 Reset System")
+
     scheduler.reset_system()
-    return redirect('/')
+
+    return redirect("/")
+
+
+# =========================
+# SET REAL MODE
+# =========================
+
+def set_real_mode(request):
+
+    print("🟢 Switching to REAL mode")
+
+    stop_scheduler()
+
+    set_mode("REAL")
+
+    start_scheduler()
+
+    return redirect("/")
+
+
+# =========================
+# SET TEST MODE
+# =========================
+
+def set_test_mode(request):
+
+    print("🧪 Switching to TEST mode")
+
+    stop_scheduler()
+
+    start_test_mode()
+
+    return redirect("/")

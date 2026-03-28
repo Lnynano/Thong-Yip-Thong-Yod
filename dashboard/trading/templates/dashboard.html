@@ -3,200 +3,255 @@
 
 <head>
 
-    <title>Gold AI Dashboard</title>
+<title>Gold AI Dashboard</title>
 
-    <meta http-equiv="refresh" content="5">
+<meta http-equiv="refresh" content="5">
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <style>
-        body {
-            font-family: Arial;
-            margin: 40px;
-            background-color: #f5f5f5;
-        }
+<style>
 
-        h1 {
-            color: #333;
-        }
+body {
+    font-family: Arial;
+    margin: 40px;
+    background-color: #f5f5f5;
+}
 
-        .card-container {
-            display: flex;
-            gap: 20px;
-            margin-bottom: 30px;
-            flex-wrap: wrap;
-        }
+h1 {
+    color: #333;
+}
 
-        .card {
+.card-container {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 30px;
+    flex-wrap: wrap;
+}
 
-            background: white;
+.card {
 
-            padding: 20px;
+    background: white;
 
-            border-radius: 10px;
+    padding: 20px;
 
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    border-radius: 10px;
 
-            width: 200px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
 
-            text-align: center;
-        }
+    width: 200px;
 
-        .status-running {
-            color: green;
-            font-weight: bold;
-        }
+    text-align: center;
+}
 
-        .status-stopped {
-            color: red;
-            font-weight: bold;
-        }
+.status-running {
+    color: green;
+    font-weight: bold;
+}
 
-        button {
+.status-stopped {
+    color: red;
+    font-weight: bold;
+}
 
-            padding: 10px 20px;
+button {
 
-            font-size: 16px;
+    padding: 10px 20px;
 
-            margin-right: 10px;
+    font-size: 16px;
 
-            cursor: pointer;
-        }
+    margin-right: 10px;
 
-        table {
+    cursor: pointer;
+}
 
-            background: white;
+/* ⭐ Scroll Table */
 
-            border-collapse: collapse;
+.table-container {
 
-            width: 100%;
-        }
+    max-height: 300px;
 
-        th,
-        td {
+    overflow-y: scroll;
 
-            padding: 10px;
+    background: white;
 
-            border: 1px solid #ddd;
+    border-radius: 10px;
 
-            text-align: center;
-        }
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
 
-        canvas {
+}
 
-            background: white;
+table {
 
-            padding: 20px;
+    border-collapse: collapse;
 
-            border-radius: 10px;
+    width: 100%;
+}
 
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-        }
+th, td {
 
-        .profit-positive {
-            color: green;
-            font-weight: bold;
-        }
+    padding: 10px;
 
-        .profit-negative {
-            color: red;
-            font-weight: bold;
-        }
-    </style>
+    border: 1px solid #ddd;
+
+    text-align: center;
+}
+
+canvas {
+
+    background: white;
+
+    padding: 20px;
+
+    border-radius: 10px;
+
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+}
+
+/* ⭐ Action Colors */
+
+.action-buy {
+    color: green;
+    font-weight: bold;
+}
+
+.action-sell {
+    color: red;
+    font-weight: bold;
+}
+
+.action-hold {
+    color: gray;
+}
+
+.profit-positive {
+    color: green;
+    font-weight: bold;
+}
+
+.profit-negative {
+    color: red;
+    font-weight: bold;
+}
+
+</style>
 
 </head>
 
 <body>
 
-    <h1>Gold AI Trading Dashboard</h1>
+<h1>Gold AI Trading Dashboard</h1>
 
-    <!-- STATUS -->
+<!-- STATUS -->
 
-    <h2>Status:</h2>
+<h2>Status:</h2>
 
-    {% if status %}
-    <p class="status-running">
-        🟢 RUNNING
-    </p>
-    {% else %}
-    <p class="status-stopped">
-        🔴 STOPPED
-    </p>
-    {% endif %}
+{% if status %}
+<p class="status-running">
+🟢 RUNNING
+</p>
+{% else %}
+<p class="status-stopped">
+🔴 STOPPED
+</p>
+{% endif %}
 
-    <!-- CONTROL -->
+<!-- CONTROL -->
 
-    <h2>Control</h2>
+<h2>Mode Control</h2>
 
-    <form action="/start/" method="get">
+<form action="/set_real/" method="get">
 
-        <button type="submit">
-            ▶ Start Auto Trade
-        </button>
+<button type="submit">
 
-    </form>
+🟢 REAL MODE  
+(6s collect / 180s trade)
 
-    <form action="/stop/" method="get">
+</button>
 
-        <button type="submit">
-            ⏹ Stop Auto Trade
-        </button>
+</form>
 
-    </form>
+<form action="/set_test/" method="get">
 
-    <!-- PORTFOLIO CARDS -->
+<button type="submit">
 
-    <h2>Portfolio Overview</h2>
+🧪 TEST MODE  
+(0.5s collect / 15s trade)
 
-    <div class="card-container">
+</button>
 
-        {% if trades %}
+</form>
 
-        <div class="card">
+<h2>Control</h2>
 
-            <h3>Cash</h3>
+<form action="/start/" method="get">
 
-            <p>
-                ฿{{ trades.0.4|floatformat:2 }}
-            </p>
+<button type="submit">
+▶ Start Auto Trade
+</button>
 
-        </div>
+</form>
 
-        <div class="card">
+<form action="/stop/" method="get">
 
-            <h3>Gold</h3>
+<button type="submit">
+⏹ Stop Auto Trade
+</button>
 
-            <p>
-                {{ trades.0.3|floatformat:2 }} oz
-            </p>
+</form>
 
-        </div>
+<!-- PORTFOLIO -->
 
-        <div class="card">
+<h2>Portfolio Overview</h2>
 
-            <h3>Last Price</h3>
+<div class="card-container">
 
-            <p>
-                ฿{{ trades.0.2|floatformat:2 }}
-            </p>
+{% if trades %}
 
-        </div>
+<div class="card">
 
-        <div class="card">
+<h3>Cash</h3>
 
-            <h3>Total Value</h3>
+<p>
+฿{{ trades.0.4|floatformat:2 }}
+</p>
 
-            <p>
-                ฿{{ values|last|floatformat:2 }}
-            </p>
+</div>
 
-        </div>
+<div class="card">
 
-        <div class="card">
+<h3>Gold</h3>
 
-            <h3>Profit / Loss</h3>
+<p>
+{{ trades.0.3|floatformat:4 }}
+</p>
 
-            <p class="
+</div>
+
+<div class="card">
+
+<h3>Last Price</h3>
+
+<p>
+฿{{ trades.0.2|floatformat:2 }}
+</p>
+
+</div>
+
+<div class="card">
+
+<h3>Total Value</h3>
+
+<p>
+฿{{ values|last|floatformat:2 }}
+</p>
+
+</div>
+
+<div class="card">
+
+<h3>Profit / Loss</h3>
+
+<p class="
 {% if profit >= 0 %}
 profit-positive
 {% else %}
@@ -204,47 +259,47 @@ profit-negative
 {% endif %}
 ">
 
-                ฿{{ profit|floatformat:2 }}
+฿{{ profit|floatformat:2 }}
 
-                <br>
+<br>
 
-                {{ profit_percent|floatformat:2 }} %
+{{ profit_percent|floatformat:2 }} %
 
-            </p>
+</p>
 
-        </div>
+</div>
 
-        {% endif %}
+{% endif %}
 
-    </div>
+</div>
 
-    <!-- PORTFOLIO GRAPH -->
+<!-- GRAPH -->
 
-    <h2>Portfolio Value</h2>
+<h2>Portfolio Value</h2>
 
-    <canvas id="portfolioChart"></canvas>
+<canvas id="portfolioChart"></canvas>
 
-    <script>
+<script>
 
-        const ctx = document.getElementById('portfolioChart');
+const ctx = document.getElementById('portfolioChart');
 
-        if (window.chart) {
-            window.chart.destroy();
-        }
+if (window.chart) {
+    window.chart.destroy();
+}
 
-        window.chart = new Chart(ctx, {
+window.chart = new Chart(ctx, {
 
-            type: 'line',
+    type: 'line',
 
-            data: {
+    data: {
 
-                labels: {{ times| safe }},
+        labels: {{ times|safe }},
 
-            datasets: [{
+        datasets: [{
 
-                label: 'Portfolio Value',
+            label: 'Portfolio Value',
 
-                data: {{ values| safe }},
+            data: {{ values|safe }},
 
             borderWidth: 2,
 
@@ -254,73 +309,92 @@ profit-negative
 
         }]
 
-    },
-
-            options: {
-
-            responsive: true,
-
-            scales: {
-
-                y: {
-
-                    beginAtZero: false
-
-                }
-
-            }
-
-        }
+    }
 
 });
 
-    </script>
+</script>
 
-    <form action="/reset/" method="get">
+<form action="/reset/" method="get">
 
-        <button type="submit" style="background-color:red; color:white;">
+<button
+    type="submit"
+    style="background-color:red; color:white;"
+>
 
-            🔄 Reset System
+🔄 Reset System
 
-        </button>
+</button>
 
-    </form>
+</form>
 
-    <!-- TRADE TABLE -->
+<!-- TRADE TABLE -->
 
-    <h2>Recent Trades</h2>
+<h2>Recent Trades</h2>
 
-    <table>
+<div class="table-container">
 
-        <tr>
+<table>
 
-            <th>Time</th>
-            <th>Action</th>
-            <th>Price</th>
-            <th>Gold</th>
-            <th>Cash</th>
+<tr>
 
-        </tr>
+<th>Time</th>
+<th>Action</th>
+<th>Price</th>
+<th>Gold</th>
+<th>Cash</th>
 
-        {% for t in trades %}
+</tr>
 
-        <tr>
+{% for t in trades %}
 
-            <td>{{ t.0 }}</td>
+<tr>
 
-            <td>{{ t.1 }}</td>
+<td>{{ t.0 }}</td>
 
-            <td>{{ t.2|floatformat:2 }}</td>
+<td class="
+{% if t.1 == 'BUY' %}
+action-buy
+{% elif t.1 == 'SELL' %}
+action-sell
+{% else %}
+action-hold
+{% endif %}
+">
 
-            <td>{{ t.3|floatformat:2 }}</td>
+{{ t.1 }}
 
-            <td>{{ t.4|floatformat:2 }}</td>
+</td>
 
-        </tr>
+<td>{{ t.2|floatformat:2 }}</td>
 
-        {% endfor %}
+<td>{{ t.3|floatformat:4 }}</td>
 
-    </table>
+<td>{{ t.4|floatformat:2 }}</td>
+
+</tr>
+
+{% endfor %}
+
+</table>
+
+</div>
+
+<!-- ⭐ Auto Scroll -->
+
+<script>
+
+const container =
+    document.querySelector(".table-container");
+
+if (container) {
+
+    container.scrollTop =
+        container.scrollHeight;
+
+}
+
+</script>
 
 </body>
 

@@ -5,7 +5,9 @@ from trading.views import (
     dashboard_view,
     start_bot,
     stop_bot,
-    reset_bot
+    reset_bot,
+    set_real_mode,
+    set_test_mode
 )
 
 urlpatterns = [
@@ -16,5 +18,9 @@ urlpatterns = [
 
     path("stop/", stop_bot),
 
-    path("reset/", reset_bot),  # ⭐ เพิ่ม
+    path("reset/", reset_bot), 
+
+    path("set_real/",set_real_mode),
+
+    path("set_test/",set_test_mode),
 ]

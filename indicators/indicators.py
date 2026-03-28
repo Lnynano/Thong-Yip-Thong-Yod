@@ -1,10 +1,56 @@
 import yfinance as yf
 import ta
+import requests
 import pandas as pd
-import random
+
+from core.mode_controller import get_mode
+from data.price_memory import get_price_history
 
 
-def fetch_price_dataframe():
+# =========================
+# USD/THB rate
+# =========================
+
+usd_thb_cache = 34.0
+
+
+def get_usd_thb():
+
+    global usd_thb_cache
+
+    url = "https://api.coingecko.com/api/v3/simple/price"
+
+    params = {
+        "ids": "tether",
+        "vs_currencies": "thb"
+    }
+
+    try:
+
+        r = requests.get(
+            url,
+            params=params,
+            timeout=5
+        )
+
+        data = r.json()
+
+        if "tether" in data:
+
+            usd_thb_cache = data["tether"]["thb"]
+
+    except:
+
+        print("⚠ Using cached USD/THB")
+
+    return usd_thb_cache
+
+
+# =========================
+# REAL MODE → Yahoo fetch
+# =========================
+
+def fetch_real_dataframe():
 
     symbol = "GC=F"
 
@@ -16,53 +62,184 @@ def fetch_price_dataframe():
     )
 
     if data.empty:
+
         print("No price data")
+
         return None
+
+    if hasattr(data.columns, "levels"):
+
+        data.columns = data.columns.droplevel(1)
 
     return data
 
 
-def compute_indicators():
-    # 1️⃣ FIRST: Fetch the data to create 'df'
-    df = fetch_price_dataframe()
+# =========================
+# TEST MODE → memory fetch
+# =========================
 
-    if df is None or len(df) < 2:
+def fetch_memory_dataframe():
+
+    prices = get_price_history()
+
+    if len(prices) < 20:
+
         return None
 
-    # 2️⃣ SECOND: Clean the data
-    if hasattr(df.columns, "levels"):
-        df.columns = df.columns.droplevel(1)
+    df = pd.DataFrame({
 
-    # 3️⃣ THIRD: Calculate indicators
-    rsi_indicator = ta.momentum.RSIIndicator(close=df["Close"], window=14)
+        "Close": prices
+
+    })
+
+    return df
+
+
+# =========================
+# Compute Indicators
+# =========================
+
+def compute_indicators():
+
+    mode = get_mode()
+
+    # =========================
+    # SELECT DATA SOURCE
+    # =========================
+
+    if mode == "TEST":
+
+        df = fetch_memory_dataframe()
+
+        if df is None:
+
+            print("Waiting memory...")
+
+            return {
+
+                "price": None,
+                "rsi": 50,
+                "macd": 0,
+                "macd_signal": 0
+
+            }
+
+    else:
+
+        df = fetch_real_dataframe()
+
+        if df is None:
+
+            return None
+
+    # =========================
+    # USD → THB convert
+    # =========================
+
+    usd_thb = get_usd_thb()
+
+    df["THAI_PRICE"] = (
+
+        df["Close"]
+        * 0.4729
+        * usd_thb
+
+    )
+
+    # =========================
+    # RSI
+    # =========================
+
+    rsi_indicator = ta.momentum.RSIIndicator(
+
+        close=df["THAI_PRICE"],
+        window=14
+
+    )
+
     df["RSI"] = rsi_indicator.rsi()
 
-    macd_indicator = ta.trend.MACD(close=df["Close"])
-    df["MACD"] = macd_indicator.macd()
-    df["MACD_SIGNAL"] = macd_indicator.macd_signal()
+    # =========================
+    # MACD
+    # =========================
 
-    # 4️⃣ FOURTH: Now that indicators are calculated, grab the last row
+    macd_indicator = ta.trend.MACD(
+
+        close=df["THAI_PRICE"]
+
+    )
+
+    df["MACD"] = macd_indicator.macd()
+
+    df["MACD_SIGNAL"] = (
+
+        macd_indicator.macd_signal()
+
+    )
+
     latest = df.iloc[-1]
 
-    # 5️⃣ FIFTH: Conversion Logic
-    usd_price = float(latest["Close"])
-    usd_thb = 34.0  # More realistic exchange rate
+    thai_price = float(
 
-    # 🧪 WEEKEND JITTER (Simulates price movement)
-    test_jitter = random.uniform(-50, 50)
-    thai_baht_price = ((usd_price * 0.4729) * usd_thb) + test_jitter
+        latest["THAI_PRICE"]
 
-    # 6️⃣ FINALLY: Return the dictionary
+    )
+
+    print(
+
+        "Mode:",
+        mode
+
+    )
+
+    print(
+
+        "USD Gold:",
+        float(latest["Close"])
+
+    )
+
+    print(
+
+        "USD/THB:",
+        usd_thb
+
+    )
+
+    print(
+
+        "Thai Price:",
+        thai_price
+
+    )
+
     indicators = {
-        "price": round(thai_baht_price, 2),  # Use 2 decimals to see jitter
-        "usd_spot": round(usd_price, 2),
-        "rsi": float(latest["RSI"]) if not pd.isna(latest["RSI"]) else 50.0,
-        "macd": float(latest["MACD"]) if not pd.isna(latest["MACD"]) else 0.0,
-        "macd_signal": float(latest["MACD_SIGNAL"]) if not pd.isna(latest["MACD_SIGNAL"]) else 0.0
+
+        "price": round(
+            thai_price,
+            2
+        ),
+
+        "rsi": float(
+            latest["RSI"]
+        ),
+
+        "macd": float(
+            latest["MACD"]
+        ),
+
+        "macd_signal": float(
+            latest["MACD_SIGNAL"]
+        )
+
     }
 
     return indicators
 
+
+# =========================
+# TEST RUN
+# =========================
 
 if __name__ == "__main__":
 
