@@ -1,0 +1,9 @@
+ services:
+    - type: web
+      name: gold-agent
+      runtime: python
+      buildCommand: pip install -r gold-agent/requirements.txt
+      startCommand: cd gold-agent && python main.py
+      envVars:
+        - key: ANTHROPIC_API_KEY
+          sync: false
