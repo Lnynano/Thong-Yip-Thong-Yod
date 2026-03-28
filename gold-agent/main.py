@@ -23,6 +23,7 @@ The Gradio dashboard launches on http://localhost:7860
 
 import sys
 import os
+import gradio as gr
 
 # Ensure all subpackages are importable regardless of working directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -148,11 +149,15 @@ def main():
         print("  Press Ctrl+C to stop.")
         print("=" * 60 + "\n")
 
+        from ui.dashboard import PNS_CSS
+        port = int(os.environ.get("PORT", 7860))
         demo.launch(
-            server_name="0.0.0.0",   # Listen on all interfaces
-            server_port=7860,
-            share=False,             # Set True to get a public Gradio link
+            server_name="0.0.0.0",
+            server_port=port,
+            share=False,
             show_error=True,
+            theme=gr.themes.Base(),
+            css=PNS_CSS,
         )
 
     except ImportError as e:
