@@ -4,7 +4,7 @@ import json
 from dotenv import load_dotenv
 from openai import OpenAI
 
-##from data.news_reader import load_cached_news
+# from data.news_reader import load_cached_news
 from indicators.indicators import compute_indicators
 from data.price_memory import get_price_history
 from data.price_memory import split_history
@@ -24,6 +24,7 @@ client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY")
 )
 
+
 def ask_llm(status):
 
     news = load_news_sentiment()
@@ -36,7 +37,7 @@ def ask_llm(status):
 
     price_history = get_price_history()
 
-    MIN_REQUIRED_MEMORY = 60
+    MIN_REQUIRED_MEMORY = 2
 
     if len(price_history) < MIN_REQUIRED_MEMORY:
 
@@ -156,7 +157,9 @@ def ask_llm(status):
     # =========================
 
     prompt = f"""
-You are an intelligent gold trading AI.
+You are an expert Thai Gold Trader AI. 
+
+The market uses 96.5% purity gold bullion measured in 'Baht-weight'.
 
 Your goal is to maximize profit by reacting to market movement.
 
@@ -210,6 +213,8 @@ Price: {indicators['price']}
 RSI: {indicators['rsi']}
 MACD: {indicators['macd']}
 MACD Signal: {indicators['macd_signal']}
+- Thai Baht Price: ฿{indicators['price']:,.2f} 
+- Global Context: USD/THB is around 32.86
 
 =========================
 
@@ -298,7 +303,7 @@ Return JSON only:
  "reason": "short explanation"
 }}
 """
-    
+
     response = client.chat.completions.create(
 
         model="gpt-4o-mini",

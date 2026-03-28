@@ -107,53 +107,41 @@ def save_portfolio(time, total_value, gold, cash):
     conn.commit()
     conn.close()
 
+
 def get_latest_portfolio():
-
-    conn = sqlite3.connect(DB_PATH)  # ⭐ แก้ตรงนี้
-
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT total_value
-        FROM portfolio
-        ORDER BY id DESC
-        LIMIT 1
-    """)
+    # Safety: check if table exists before querying
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='portfolio'")
+    if not cursor.fetchone():
+        conn.close()
+        return {"total_value": 1500.0}  # New Thai Capital
 
+    cursor.execute(
+        "SELECT total_value FROM portfolio ORDER BY id DESC LIMIT 1")
     row = cursor.fetchone()
-
     conn.close()
 
     if row:
         return {"total_value": row[0]}
 
-    return {"total_value": 10000}
-
+    return {"total_value": 1500.0}  # Return 100k if empty
 
 
 def reset_database():
-
     conn = sqlite3.connect(DB_PATH)
-
     cursor = conn.cursor()
 
-    # ลบข้อมูลทั้งหมด
-
-    cursor.execute("DELETE FROM trades")
-
-    cursor.execute("DELETE FROM portfolio")
-
-    # reset auto increment
-
-    cursor.execute(
-        "DELETE FROM sqlite_sequence WHERE name='trades'"
-    )
-
-    cursor.execute(
-        "DELETE FROM sqlite_sequence WHERE name='portfolio'"
-    )
+    # Clear everything
+    cursor.execute("DROP TABLE IF EXISTS trades")
+    cursor.execute("DROP TABLE IF EXISTS portfolio")
 
     conn.commit()
     conn.close()
 
-    print("Database reset complete")
+    # Re-initialize the structure so the tables EXIST (but are empty)
+    init_db()
+
+    print("Database reset and tables recreated.")
