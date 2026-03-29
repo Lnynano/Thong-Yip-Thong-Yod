@@ -200,8 +200,6 @@ def set_test_mode(request):
 
     print("🧪 Switching to TEST mode")
 
-    stop_scheduler()
-
     start_test_mode()
 
     return redirect("/")

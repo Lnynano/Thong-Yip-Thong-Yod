@@ -1,4 +1,11 @@
+from core.mode_controller import get_time_config
+from core.mode_controller import (
+    get_mode,
+    get_next_test_price,
+    load_test_data
+)
 from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from llm.agent import ask_llm
 from llm.news_agent import analyze_news_sentiment
@@ -182,16 +189,6 @@ def trading_job():
 # PRICE COLLECTION
 # ===============================
 
-from core.mode_controller import (
-    get_mode,
-    get_next_test_price,
-    load_test_data
-)
-
-from core.mode_controller import (
-    get_mode,
-    get_next_test_price
-)
 
 def collect_price():
 
@@ -233,7 +230,6 @@ def news_pipeline():
 # SCHEDULER CONTROL
 # ===============================
 
-from core.mode_controller import get_time_config
 
 def start_scheduler():
 
@@ -242,20 +238,15 @@ def start_scheduler():
     global initial_capital
 
     config = get_time_config()
-
     price_interval = config["price_interval"]
     trade_interval = config["trade_interval"]
 
     if is_running:
-
         print("Scheduler already running")
-
         return
 
     from database.db import get_latest_portfolio
-
     portfolio = get_latest_portfolio()
-
     initial_capital = portfolio["total_value"]
 
     print(
@@ -263,7 +254,7 @@ def start_scheduler():
         initial_capital
     )
 
-    scheduler = BlockingScheduler()
+    scheduler = BackgroundScheduler()
 
     scheduler.add_job(
         collect_price,
@@ -276,7 +267,6 @@ def start_scheduler():
         "interval",
         seconds=trade_interval
     )
-
 
     scheduler.add_job(
         news_pipeline,
@@ -299,29 +289,30 @@ def start_scheduler():
     print("\nRunning daily market analysis...")
     analyze_daily_market()
 
+    scheduler.start()
     is_running = True
-
-    import threading
-
-    thread = threading.Thread(
-        target=scheduler.start
-    )
-
-    thread.daemon = True
-    thread.start()
+    print("✅ Scheduler started in background.")
 
 
 def stop_scheduler():
 
     global scheduler
     global is_running
+    print("Stopping scheduler...")
 
-    if scheduler:
+    if scheduler is not None:
+        try:
+            if scheduler.running:
+                scheduler.shutdown(wait=False)
+                print("✅ Scheduler shut down successfully.")
+            else:
+                print("ℹ️ Scheduler exists but is not running.")
+        except Exception as e:
+            print(f"⚠️ Error during shutdown: {e}")
+    else:
+        print("ℹ️ No scheduler instance found to stop.")
 
-        scheduler.shutdown()
-
-        print("🛑 Scheduler stopped")
-
+    scheduler = None
     is_running = False
 
 
@@ -348,11 +339,6 @@ def reset_system():
     print("♻️ System reset complete")
 
 
-from core.mode_controller import (
-    set_mode,
-    load_test_data
-)
-
 def start_test_mode():
 
     global scheduler
@@ -362,9 +348,10 @@ def start_test_mode():
 
     stop_scheduler()
 
+    from core.mode_controller import set_mode
     set_mode("TEST")
 
-    # ⭐ โหลด data ก่อน
+    print("📊 Loading test data...")
     load_test_data()
 
     start_scheduler()
