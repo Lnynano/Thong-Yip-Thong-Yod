@@ -66,16 +66,36 @@ def test_market_regime_returns_valid_label():
 
 
 def test_market_regime_uptrend():
-    """Strongly rising prices should produce TRENDING UP."""
-    closes = [2800.0 + i * 15 for i in range(60)]
+    """Steadily rising prices (narrow bands) should produce TRENDING UP."""
+    # Step of 2 keeps bandwidth ~0.016, well below the 0.04 VOLATILE threshold
+    closes = [2800.0 + i * 2 for i in range(60)]
     df = _make_df(closes)
     regime = calculate_market_regime(df)
     assert regime == "TRENDING UP"
 
 
 def test_market_regime_downtrend():
-    """Strongly falling prices should produce TRENDING DOWN."""
-    closes = [3700.0 - i * 15 for i in range(60)]
+    """Steadily falling prices (narrow bands) should produce TRENDING DOWN."""
+    # Step of 2 keeps bandwidth ~0.013, well below the 0.04 VOLATILE threshold
+    closes = [3700.0 - i * 2 for i in range(60)]
     df = _make_df(closes)
     regime = calculate_market_regime(df)
     assert regime == "TRENDING DOWN"
+
+
+def test_market_regime_volatile():
+    """Flat prices with a sudden spike should produce VOLATILE (wide bands)."""
+    # Flat base then sharp spike creates wide Bollinger bands
+    closes = [3000.0] * 40 + [3000.0 + i * 100 for i in range(20)]
+    df = _make_df(closes)
+    regime = calculate_market_regime(df)
+    assert regime == "VOLATILE"
+
+
+def test_market_regime_ranging():
+    """Flat prices with zero momentum should produce RANGING."""
+    # Completely flat data: bandwidth=0, MACD histogram=0 → neither trend condition fires
+    closes = [3000.0] * 60
+    df = _make_df(closes)
+    regime = calculate_market_regime(df)
+    assert regime == "RANGING"

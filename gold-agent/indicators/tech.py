@@ -379,7 +379,7 @@ def calculate_market_regime(df: pd.DataFrame) -> str:
     Classify the current market regime from price action.
 
     Rules (evaluated in order):
-      1. VOLATILE    : BB bandwidth > 0.04  (high volatility squeeze breakout)
+      1. VOLATILE    : BB bandwidth > 0.04  (high volatility — checked first)
       2. TRENDING UP : MACD histogram > 0 AND price > SMA20
       3. TRENDING DOWN: MACD histogram < 0 AND price < SMA20
       4. RANGING     : everything else
@@ -394,18 +394,17 @@ def calculate_market_regime(df: pd.DataFrame) -> str:
         macd = calculate_macd(df)
         bb   = calculate_bollinger_bands(df)
 
-        close = df["Close"]
-        sma20 = float(close.rolling(20).mean().iloc[-1])
-        current_price = float(close.iloc[-1])
+        current_price = float(df["Close"].iloc[-1])
+        sma20 = bb["middle"]
 
         bandwidth = bb["bandwidth"]
 
+        if bandwidth > 0.04:
+            return "VOLATILE"
         if macd["histogram"] > 0 and current_price > sma20:
             return "TRENDING UP"
         if macd["histogram"] < 0 and current_price < sma20:
             return "TRENDING DOWN"
-        if bandwidth > 0.04:
-            return "VOLATILE"
         return "RANGING"
 
     except Exception as e:
