@@ -656,14 +656,19 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
             rsi_chart_fig = None
 
         # 3. Indicators
-        from indicators.tech import calculate_rsi, calculate_macd
+        from indicators.tech import (calculate_rsi, calculate_macd,
+                                     calculate_bollinger_bands,
+                                     calculate_confluence_score,
+                                     calculate_market_regime)
         rsi  = calculate_rsi(df)
         macd = calculate_macd(df)
+        bb   = calculate_bollinger_bands(df)
         rsi_signal  = "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else "NEUTRAL"
         macd_signal = "BULLISH" if macd["histogram"] > 0 else "BEARISH"
         rsi_str  = f"{rsi:.1f}  —  {rsi_signal}"
         macd_str = f"{macd['histogram']:+.2f}  —  {macd_signal}"
         indicators_str = f"RSI {rsi:.1f} {rsi_signal}  ·  MACD {macd['histogram']:+.3f} {macd_signal}"
+        regime = calculate_market_regime(df)
 
         # 4. News
         from news.sentiment import get_gold_news, get_sentiment_summary
@@ -723,7 +728,23 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
 
         # Build HTML blocks
         price_block  = _price_html(thb_now, price_usd, change, fetch_time, rate, rate_src)
-        dec_block    = _decision_html(decision, confidence, reasoning, trade_mode)
+        # Scale BB bands from USD to THB using same ratio as current price
+        thb_per_usd_oz = thb_now / price_usd if price_usd > 0 else 0.0
+        bb_lower_thb = round(bb["lower"] * thb_per_usd_oz, 0)
+        bb_upper_thb = round(bb["upper"] * thb_per_usd_oz, 0)
+
+        confluence = calculate_confluence_score(df, sentiment)
+
+        dec_block = _decision_html(
+            decision, confidence, reasoning, trade_mode,
+            key_factors=agent.get("key_factors", []),
+            risk_note=agent.get("risk_note", ""),
+            confluence=confluence,
+            regime=regime,
+            bb_lower=bb_lower_thb,
+            bb_upper=bb_upper_thb,
+            current_price_thb=thb_now,
+        )
         port_block   = _portfolio_html(portfolio)
         outcome_bar  = _outcome_bar_html(outcomes)
         trade_table  = _trade_table_html(trades, portfolio.get("open_position"))
@@ -781,7 +802,10 @@ def _error_outputs(msg: str, trade_mode: bool = False) -> tuple:
 
     return (
         f'<div style="color:#cc3333;padding:20px;font-family:Courier New;">{msg}</div>',
-        _decision_html("HOLD", 0, msg, trade_mode),
+        _decision_html("HOLD", 0, msg, trade_mode,
+                       key_factors=[], risk_note="",
+                       confluence=5.0, regime="RANGING",
+                       bb_lower=0.0, bb_upper=0.0, current_price_thb=0.0),
         "Last updated: —",
         None,
         None,
