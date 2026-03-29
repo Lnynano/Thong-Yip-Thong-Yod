@@ -205,9 +205,33 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
             rsi_signal  = "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else "NEUTRAL"
             macd_signal = "BULLISH" if macd["histogram"] > 0 else "BEARISH"
 
-            # Structured state
+            # Multi-timeframe: H1 context
+            h1_context = {}
+            try:
+                from data.fetch import get_gold_price_intraday
+                df_h1 = get_gold_price_intraday(interval="1h", days=5)
+                if not df_h1.empty and len(df_h1) >= 15:
+                    h1_rsi  = calculate_rsi(df_h1, period=14)
+                    h1_macd = calculate_macd(df_h1)
+                    h1_trend = "BULLISH" if h1_macd["histogram"] > 0 else "BEARISH"
+                    h1_rsi_sig = ("OVERBOUGHT" if h1_rsi > 70
+                                  else "OVERSOLD" if h1_rsi < 30
+                                  else "NEUTRAL")
+                    h1_context = {
+                        "interval": "H1",
+                        "bars": len(df_h1),
+                        "rsi": round(h1_rsi, 2),
+                        "rsi_signal": h1_rsi_sig,
+                        "macd_histogram": h1_macd["histogram"],
+                        "trend": h1_trend,
+                        "note": "H1 RSI and MACD for intraday momentum confirmation",
+                    }
+            except Exception as e:
+                print(f"[claude_agent.py] H1 MTF fetch failed (non-critical): {e}")
+
             result = {
                 "note": "All values are pre-computed deterministically. Do NOT recalculate.",
+                "timeframe": "D1 (primary)",
                 "rsi": {
                     "value"  : rsi,
                     "signal" : rsi_signal,
@@ -232,6 +256,12 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
                     "interpretation": f"%B={bb['percent_b']:.2f} ({bb['signal']})",
                 },
             }
+            if h1_context:
+                result["h1_intraday"] = h1_context
+                result["mtf_note"] = (
+                    "H1 and D1 aligned = stronger signal. "
+                    "H1 and D1 diverging = wait for confirmation."
+                )
             return json.dumps(result)
 
         # ── Tool: get_news ───────────────────────────────────────────────────

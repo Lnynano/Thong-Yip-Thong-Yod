@@ -82,6 +82,42 @@ def get_fetch_time() -> str:
     return _last_fetched_at
 
 
+def get_gold_price_intraday(interval: str = "1h", days: int = 5) -> pd.DataFrame:
+    """
+    Fetch recent intraday XAUUSD data for multi-timeframe analysis.
+
+    Args:
+        interval: yfinance interval string — "1h" or "15m". Default "1h".
+        days: Number of calendar days to look back. Default 5.
+
+    Returns:
+        pd.DataFrame: OHLCV DataFrame indexed by datetime, or empty on failure.
+    """
+    try:
+        end_date   = datetime.today()
+        start_date = end_date - timedelta(days=days)
+
+        ticker = yf.Ticker("GC=F")
+        df = ticker.history(
+            start=start_date.strftime("%Y-%m-%d"),
+            end=end_date.strftime("%Y-%m-%d"),
+            interval=interval,
+        )
+
+        if df.empty:
+            print(f"[fetch.py] Intraday ({interval}): No data returned.")
+            return pd.DataFrame()
+
+        df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+        df.dropna(inplace=True)
+        print(f"[fetch.py] Intraday ({interval}): {len(df)} bars fetched.")
+        return df
+
+    except Exception as e:
+        print(f"[fetch.py] Error fetching intraday ({interval}): {e}")
+        return pd.DataFrame()
+
+
 # Allow standalone testing
 if __name__ == "__main__":
     df = get_gold_price()
