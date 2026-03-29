@@ -305,21 +305,55 @@ def _trade_mode_html(trade_mode: bool) -> str:
 
 
 def _decision_html(decision: str, confidence: int, reasoning: str,
-                   trade_mode: bool = False) -> str:
-    """BUY/SELL/HOLD card with reasoning — PNS style."""
+                   trade_mode: bool = False,
+                   key_factors: list | None = None,
+                   risk_note: str = "",
+                   confluence: float = 5.0,
+                   regime: str = "RANGING",
+                   bb_lower: float = 0.0,
+                   bb_upper: float = 0.0,
+                   current_price_thb: float = 0.0) -> str:
+    """BUY/SELL/HOLD card with conviction badge, confluence score,
+    market regime, signal detail (SL/TP/key factors), and reasoning."""
     cfg = {
         "BUY":  ("#c9f002", "📈"),
         "SELL": ("#cc3333", "📉"),
         "HOLD": ("#555555", "⏸"),
     }
     color, icon = cfg.get(decision.upper(), ("#555", "?"))
-    # Dim the signal color when trade mode is off
     if not trade_mode and decision.upper() in ("BUY", "SELL"):
         color = "#666666"
+
+    # Conviction badge
+    if confidence >= 80:
+        conviction = "HIGH"
+        conv_color = "#c9f002"
+    elif confidence >= 60:
+        conviction = "MEDIUM"
+        conv_color = "#f0a002"
+    else:
+        conviction = "LOW"
+        conv_color = "#cc3333"
+
+    # Regime color
+    regime_colors = {
+        "TRENDING UP":   "#c9f002",
+        "TRENDING DOWN": "#cc3333",
+        "VOLATILE":      "#f0a002",
+        "RANGING":       "#555555",
+    }
+    regime_color = regime_colors.get(regime, "#555555")
+
+    # Confluence bar (filled blocks)
+    filled = int(round(confluence))
+    conf_bar = "█" * filled + "░" * (10 - filled)
+    conf_color = "#c9f002" if confluence >= 6 else "#f0a002" if confluence >= 4 else "#cc3333"
+
     lines = "".join(
         f'<div style="margin:3px 0; color:#888; font-size:0.88em;">{l}</div>'
         for l in reasoning.split("\n") if l.strip()
     )
+
     trade_tag = (
         '<span style="color:#c9f002; font-size:0.72em; letter-spacing:0.1em; '
         'border:1px solid #2a4400; padding:2px 8px; border-radius:3px; '
@@ -329,6 +363,58 @@ def _decision_html(decision: str, confidence: int, reasoning: str,
         '<span style="color:#444; font-size:0.72em; letter-spacing:0.1em; '
         'border:1px solid #222; padding:2px 8px; border-radius:3px;">ANALYSIS ONLY</span>'
     )
+
+    # Key factors list
+    factors_html = ""
+    if key_factors:
+        items = "".join(
+            f'<div style="color:#666; font-size:0.82em; margin:2px 0;">▸ {f}</div>'
+            for f in key_factors[:4]
+        )
+        factors_html = f"""
+      <div style="margin-top:10px; padding-top:10px; border-top:1px solid #1e1e1e;">
+        <div style="color:#444; font-size:0.68em; letter-spacing:0.1em; margin-bottom:6px;">KEY FACTORS</div>
+        {items}
+      </div>"""
+
+    # Risk note
+    risk_html = ""
+    if risk_note and risk_note.strip():
+        risk_html = f"""
+      <div style="margin-top:8px; color:#555; font-size:0.8em;">
+        ⚠ {risk_note}
+      </div>"""
+
+    # SL / TP suggestion from Bollinger Bands
+    sltp_html = ""
+    if current_price_thb > 0 and bb_lower > 0 and bb_upper > 0:
+        if decision.upper() == "BUY":
+            sl_thb = bb_lower
+            tp_thb = bb_upper
+        elif decision.upper() == "SELL":
+            sl_thb = bb_upper
+            tp_thb = bb_lower
+        else:
+            sl_thb = tp_thb = 0.0
+
+        if sl_thb > 0 and tp_thb > 0:
+            sltp_html = f"""
+      <div style="margin-top:10px; padding-top:10px; border-top:1px solid #1e1e1e;
+                  display:flex; gap:24px; flex-wrap:wrap;">
+        <div>
+          <div style="color:#444; font-size:0.68em; letter-spacing:0.1em;">ENTRY ZONE</div>
+          <div style="color:#aaa; font-size:0.9em;">฿{current_price_thb:,.0f}</div>
+        </div>
+        <div>
+          <div style="color:#444; font-size:0.68em; letter-spacing:0.1em;">SL (BB BAND)</div>
+          <div style="color:#cc3333; font-size:0.9em;">฿{sl_thb:,.0f}</div>
+        </div>
+        <div>
+          <div style="color:#444; font-size:0.68em; letter-spacing:0.1em;">TP (BB BAND)</div>
+          <div style="color:#c9f002; font-size:0.9em;">฿{tp_thb:,.0f}</div>
+        </div>
+      </div>"""
+
     return f"""
 <div style="font-family:'Courier New',monospace; padding:20px 24px; background:#0f0f0f;
             border:1px solid #1e1e1e; border-radius:6px;">
@@ -338,12 +424,35 @@ def _decision_html(decision: str, confidence: int, reasoning: str,
   <div style="display:flex; align-items:center; gap:20px; flex-wrap:wrap;">
     <span style="color:{color}; font-size:2.8em; font-weight:900;
                  letter-spacing:6px;">{icon} {decision.upper()}</span>
-    <span style="color:{color}; font-size:1em;">Confidence: {confidence}%</span>
+    <div>
+      <div style="color:{color}; font-size:1em;">Confidence: {confidence}%</div>
+      <div style="color:{conv_color}; font-size:0.75em; letter-spacing:0.12em; font-weight:700;">
+        CONVICTION: {conviction}
+      </div>
+    </div>
     {trade_tag}
   </div>
+
+  <div style="margin-top:12px; display:flex; gap:24px; flex-wrap:wrap; align-items:center;">
+    <div>
+      <div style="color:#444; font-size:0.68em; letter-spacing:0.1em;">CONFLUENCE</div>
+      <div style="color:{conf_color}; font-size:0.82em; font-family:'Courier New',monospace;">
+        {conf_bar}  {confluence:.1f}/10
+      </div>
+    </div>
+    <div>
+      <div style="color:#444; font-size:0.68em; letter-spacing:0.1em;">MARKET REGIME</div>
+      <div style="color:{regime_color}; font-size:0.82em; font-weight:700;">{regime}</div>
+    </div>
+  </div>
+
+  {sltp_html}
+
   <div style="margin-top:14px; border-top:1px solid #1e1e1e; padding-top:12px;">
     {lines}
   </div>
+  {factors_html}
+  {risk_html}
 </div>"""
 
 
