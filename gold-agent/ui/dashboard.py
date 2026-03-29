@@ -250,6 +250,94 @@ def _build_equity_chart(equity_history: list) -> plt.Figure:
     return fig
 
 
+def _build_pl_card(portfolio: dict) -> str | None:
+    """
+    Generate a branded PNG P&L performance card for social sharing.
+
+    Args:
+        portfolio: dict from get_portfolio_summary()
+
+    Returns:
+        str: Absolute path to the generated PNG file, or None on failure.
+    """
+    import tempfile
+
+    try:
+        BG      = "#0b0b0b"
+        ACCENT  = "#c9f002"
+        RED     = "#cc3333"
+        GRAY    = "#555555"
+
+        pnl       = portfolio.get("total_pnl", 0.0)
+        pnl_pct   = portfolio.get("total_pnl_pct", 0.0)
+        win_rate  = portfolio.get("win_rate", 0.0)
+        wins      = portfolio.get("wins", 0)
+        losses    = portfolio.get("losses", 0)
+        trades    = portfolio.get("total_trades", 0)
+        rr        = portfolio.get("rr_ratio", 0.0)
+        equity    = portfolio.get("total_equity", 0.0)
+        pnl_color = ACCENT if pnl >= 0 else RED
+        sign      = "+" if pnl >= 0 else ""
+
+        fig, ax = plt.subplots(figsize=(7, 3.5), facecolor=BG)
+        ax.set_facecolor(BG)
+        ax.axis("off")
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
+        ax.text(0.04, 0.92, "THONG YIP THONG YOD",
+                transform=ax.transAxes, color=GRAY,
+                fontsize=10, fontfamily="monospace",
+                fontweight="bold", va="top")
+        ax.text(0.04, 0.80, "PAPER TRADING  ·  XAUUSD",
+                transform=ax.transAxes, color="#333",
+                fontsize=7, fontfamily="monospace", va="top")
+
+        ax.text(0.04, 0.60,
+                f"{sign}฿{pnl:,.2f}  ({sign}{pnl_pct:.2f}%)",
+                transform=ax.transAxes, color=pnl_color,
+                fontsize=22, fontfamily="monospace",
+                fontweight="black", va="top")
+
+        ax.text(0.04, 0.35, "TOTAL P&L",
+                transform=ax.transAxes, color=GRAY,
+                fontsize=7, fontfamily="monospace", va="top")
+
+        stats = [
+            ("WIN RATE",  f"{win_rate:.1f}%"),
+            ("W / L",     f"{wins} / {losses}"),
+            ("TRADES",    str(trades)),
+            ("R:R",       f"{rr:.2f}:1" if rr > 0 else "-"),
+            ("EQUITY",    f"฿{equity:,.0f}"),
+        ]
+        x = 0.04
+        for label, val in stats:
+            ax.text(x, 0.18, label, transform=ax.transAxes,
+                    color=GRAY, fontsize=6.5, fontfamily="monospace", va="top")
+            ax.text(x, 0.10, val, transform=ax.transAxes,
+                    color="#cccccc", fontsize=9, fontfamily="monospace",
+                    fontweight="bold", va="top")
+            x += 0.19
+
+        ax.plot([0.04, 0.96], [0.03, 0.03],
+                color=ACCENT, linewidth=1.5, transform=ax.transAxes, clip_on=False)
+
+        plt.tight_layout(pad=0.4)
+
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".png", delete=False,
+            prefix="tytyd_pl_card_"
+        )
+        fig.savefig(tmp.name, dpi=150, bbox_inches="tight",
+                    facecolor=BG, edgecolor="none")
+        plt.close(fig)
+        return tmp.name
+
+    except Exception as e:
+        print(f"[dashboard] P&L card generation failed: {e}")
+        return None
+
+
 # ─────────────────────────────────────────────────────────────
 # HTML helpers
 # ─────────────────────────────────────────────────────────────
@@ -906,6 +994,10 @@ def build_ui() -> gr.Blocks:
                 gr.Markdown("## P&L CURVE")
                 equity_chart = gr.Plot(label="")
                 with gr.Row():
+                    share_btn = gr.Button("📤  SHARE P&L CARD",
+                                          variant="secondary", scale=1, size="sm")
+                    pl_card_file = gr.File(label="Download P&L Card", visible=False)
+                with gr.Row():
                     reset_btn = gr.Button("↺  RESET PORTFOLIO",
                                          variant="secondary", scale=1, size="sm")
                     gr.HTML('<div style="color:#333; font-size:0.75em; padding:8px; '
@@ -1018,6 +1110,20 @@ def build_ui() -> gr.Blocks:
 
         reset_btn.click(fn=_reset, inputs=[],
                         outputs=[portfolio_html, equity_chart, outcome_bar, trade_table])
+
+        def _generate_pl_card():
+            from trader.paper_engine import get_portfolio_summary
+            portfolio = get_portfolio_summary(0)
+            path = _build_pl_card(portfolio)
+            if path:
+                return gr.File(value=path, visible=True)
+            return gr.File(visible=False)
+
+        share_btn.click(
+            fn=_generate_pl_card,
+            inputs=[],
+            outputs=[pl_card_file],
+        )
 
         def _filter_trades(filter_mode: str):
             from trader.paper_engine import get_trade_history, get_portfolio_summary
