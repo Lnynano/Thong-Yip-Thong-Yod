@@ -522,8 +522,15 @@ def _outcome_bar_html(outcomes: list) -> str:
     return f'<div style="padding:8px 0;">{squares}</div>'
 
 
-def _trade_table_html(trades: list, open_position: dict | None = None) -> str:
+def _trade_table_html(trades: list, open_position: dict | None = None,
+                      filter_mode: str = "ALL") -> str:
     """HTML trade journal table — PNS style. Shows open position at top if present."""
+    # Apply win/loss filter (open position row always shown regardless of filter)
+    if filter_mode == "WIN":
+        trades = [t for t in trades if t.get("outcome") == "WIN"]
+    elif filter_mode == "LOSS":
+        trades = [t for t in trades if t.get("outcome") == "LOSS"]
+
     if not trades and not open_position:
         return '<div style="color:#333; font-size:0.85em; padding:16px; ' \
                'font-family:Courier New,monospace;">No closed trades yet.</div>'
@@ -905,6 +912,12 @@ def build_ui() -> gr.Blocks:
                             'font-family:Courier New;">Paper trading only — no real money.</div>')
 
             with gr.Tab("Trades"):
+                trade_filter = gr.Radio(
+                    choices=["ALL", "WIN", "LOSS"],
+                    value="ALL",
+                    label="FILTER",
+                    interactive=True,
+                )
                 outcome_bar = gr.HTML()
                 trade_table = gr.HTML()
 
@@ -1001,10 +1014,22 @@ def build_ui() -> gr.Blocks:
                 eq = None
             return (_portfolio_html(p), eq,
                     _outcome_bar_html(get_recent_outcomes(15)),
-                    _trade_table_html(get_trade_history(20), p.get("open_position")))
+                    _trade_table_html(get_trade_history(20), p.get("open_position"), "ALL"))
 
         reset_btn.click(fn=_reset, inputs=[],
                         outputs=[portfolio_html, equity_chart, outcome_bar, trade_table])
+
+        def _filter_trades(filter_mode: str):
+            from trader.paper_engine import get_trade_history, get_portfolio_summary
+            trades = get_trade_history(20)
+            portfolio = get_portfolio_summary(0)
+            return _trade_table_html(trades, portfolio.get("open_position"), filter_mode)
+
+        trade_filter.change(
+            fn=_filter_trades,
+            inputs=[trade_filter],
+            outputs=[trade_table],
+        )
 
         # Clear log
         def _clear():
