@@ -37,7 +37,7 @@ def ask_llm(status):
 
     price_history = get_price_history()
 
-    MIN_REQUIRED_MEMORY = 20
+    MIN_REQUIRED_MEMORY = 60
 
     if len(price_history) < MIN_REQUIRED_MEMORY:
 

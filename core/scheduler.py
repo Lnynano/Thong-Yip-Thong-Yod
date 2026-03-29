@@ -62,29 +62,7 @@ def trading_job():
 
     status = simulator.get_status(price)
 
-    # ===========================
-    # Count trades today ⭐
-    # ===========================
 
-    trades_today = simulator.get_trades_today_count()
-
-    status["trades_today"] = trades_today
-
-    # ===========================
-    # First trade bias ⭐
-    # ===========================
-
-    if trades_today == 0:
-
-        print(
-            "🧠 First Trade Mode Active"
-        )
-
-        status["first_trade_bias"] = True
-
-    else:
-
-        status["first_trade_bias"] = False
 
     # ===========================
     # Ask LLM

@@ -129,7 +129,7 @@ def get_time_config():
 
         return {
 
-            "price_interval": 6,      # collect price ทุก 6 วิ
+            "price_interval": 3,      # collect price ทุก 6 วิ
             "trade_interval": 180,    # AI trade ทุก 180 วิ
 
         }
@@ -139,7 +139,7 @@ def get_time_config():
         return {
 
             "price_interval": 0.5,    # collect เร็วขึ้น
-            "trade_interval": 15,     # AI เร็วขึ้น
+            "trade_interval": 30,     # AI เร็วขึ้น
 
         }
 
