@@ -81,6 +81,22 @@ def ask_llm(status):
 
         buy_score += 1
 
+    if indicators["rsi"] < 35:
+
+        buy_score += 1
+
+    if indicators["rsi"] > 50:
+
+        buy_score -= 1
+
+    if indicators["rsi"] > 55:
+
+        buy_score -= 1
+
+    if indicators["rsi"] > 65:
+
+        buy_score -= 1
+
     # 2️⃣ Trend Following (สำคัญมาก)
 
     if (
@@ -108,9 +124,7 @@ def ask_llm(status):
 
     if status["gold"] > 0:
 
-        # ลดโอกาส BUY อย่างแรง
-
-        buy_score -= 999
+        buy_score = 0
 
     # =========================
     # MARKET CONDITION
@@ -147,6 +161,14 @@ def ask_llm(status):
     ):
         urgency_score += 1
 
+    if (status["gold"] == 0 and indicators["rsi"] < 45):
+
+        urgency_score += 1
+
+    if (status["gold"] > 0 and indicators["rsi"] < 65):
+
+        urgency_score += 1
+
     # -------------------------    
 
     if urgency_score >= 2:
@@ -176,21 +198,21 @@ def ask_llm(status):
         if recent_trend == "DOWN":
             sell_score += 1
 
+        if indicators["rsi"] < 45:
+
+            sell_score -= 1
+
     if indicators["rsi"] > 70:
 
         sell_score += 1
 
-    # 2️⃣ Downtrend
-
-    if recent_trend == "DOWN":
-
-        sell_score += 1
 
     # 3️⃣ MACD bearish
 
     if indicators['macd'] < indicators['macd_signal']:
 
         sell_score += 1
+
 
     # 4️⃣ Negative momentum
 
@@ -201,28 +223,12 @@ def ask_llm(status):
     if status["profit_percent"] > 0.4:
         sell_score += 1
 
+    if status["gold"] == 0:
 
-    final_bias_score = buy_score - sell_score
+        sell_score = 0
 
-    if final_bias_score >= 2:
 
-        final_bias = "Strong BUY"
 
-    elif final_bias_score == 1:
-
-        final_bias = "Weak BUY"
-
-    elif final_bias_score == 0:
-
-        final_bias = "Neutral"
-
-    elif final_bias_score == -1:
-
-        final_bias = "Weak SELL"
-
-    else:
-
-        final_bias = "Strong SELL"
 
     # =========================
     # SELL BIAS CHECK
@@ -253,25 +259,6 @@ def ask_llm(status):
         global_bias = "Prefer SELL"
 
 
-    trades_today = status.get("trades_today", 0)
-
-    first_trade_bias = ""
-
-    if trades_today == 0:
-
-        first_trade_bias = """
-    IMPORTANT CONTEXT:
-
-    This is the first trade opportunity of the day.
-
-    You should be more willing to take a trade
-    if signals are reasonable.
-
-    Avoid excessive HOLD decisions.
-    Prefer making the first meaningful trade
-    when indicators show opportunity.
-    """
-
     # =========================
     # PROMPT
     # =========================
@@ -280,6 +267,8 @@ def ask_llm(status):
 You are an expert Thai Gold Trader AI. 
 
 You trade in thai gold.
+
+you looking at trade every 10 min that mean the value of gold is go up and down very fast remember this
 
 The market uses 96.5% purity gold bullion measured in 'Baht-weight'.
 
@@ -291,7 +280,11 @@ you can hold only 1 gold a time.
 
 you have 2 helper agent there info is very useful
 
-{first_trade_bias}
+=========================
+
+THIS IS VERY IMPORTANT YOU BETTER FOLLOW IT
+
+Important Priority order : RSI > (your thought, Score) > Skill
 
 =========================
 
@@ -334,12 +327,10 @@ POSITION RULE:
 You can hold only ONE gold position.
 
 If Gold Held > 0:
-
-- DO NOT BUY again.
+- DO NOT BUY again or think about buy.
 - Focus on HOLD or SELL.
 
 Only BUY when Gold Held == 0.
-
 If profit becomes positive
 and trend weakens:
 
@@ -373,18 +364,14 @@ Past Trend: {past_trend}
 
 Quantitative Scores:
 
-BUY Score: {buy_score} / 4
-SELL Score: {sell_score} / 4
+BUY Score: {buy_score} / 5
+SELL Score: {sell_score} / 5
 
 Urgency Level: {urgency_level}
 
-Final Bias Score: {final_bias_score}
-
-Bias Interpretation:
-
-{final_bias}
-
 CRITICAL SELL RULE:
+
+if any score is <= 1: decress that action chance if not worth it
 
 If SELL Score ≥ 3:
 
@@ -395,16 +382,18 @@ Avoid HOLD when sell pressure exists.
 Decision Guidelines:
 
 If BUY Score ≥ 3 and SELL Score ≤ 1:
-→ Strong BUY candidate
+→ BUY candidate incress
 
 If SELL Score ≥ 3 and BUY Score ≤ 1:
-→ Strong SELL candidate
+→ SELL candidate incress
 
-If both scores are low:
+If both scores not full or very high:
 → HOLD is acceptable
 
 If urgency is HIGH:
-→ Prefer taking action instead of HOLD
+→ Prefer taking action instead of HOLD if other score is high too
+
+NOTE : every score is just a helper for design not a forse to do
 
 =========================
 
@@ -420,10 +409,10 @@ Global Bias: {global_bias}
 Trading Strategy:
 
 1. Buy the Dip:
-   If RSI < 45 → Strong BUY opportunity.
+   If RSI < 40 → Strong BUY opportunity.
 
 2. Sell Conditions:
-   If RSI > 65 → good for SELL.
+   If RSI > 70 → good for SELL.
    If Trend becomes DOWN → Consider SELL.
 
 3. HOLD is a valid and intelligent decision.
@@ -436,16 +425,17 @@ Trading Strategy:
 4. try to Avoid HOLD if not need
    when BUY or SELL score ≥ 4
 
+
 =========================
 
-SKILL
+SKILL (only use if it have very strong reason to use)
 
 TREND FOLLOWING SKILL:
 
 If the market is in an Uptrend
 and price continues to rise steadily:
 
-You are allowed to BUY even if RSI is between 55–65.
+You are allowed to BUY even if RSI is between 45–55.
 
 Do not wait too long during strong uptrends but it have to be clearly uptrends.
 Strong trends should be followed.
@@ -520,10 +510,10 @@ Return JSON only:
     print("BUY score: ", buy_score)
     print("SELL score: ", sell_score)
     print("Urgency: ", urgency_level)
-    print("Final bias: ", final_bias)
 
     print("rsi: ", indicators["rsi"])
-    print("trade time: ", trades_today)
+
+    print("profit_percent: ", status["profit_percent"])
 
     text = response.choices[0].message.content
 

@@ -87,8 +87,6 @@ def trading_job():
 
         decision = ask_llm(status)
 
-        print("Raw Decision:", decision)
-
         decision = decision.strip()
 
         # Clean markdown json

@@ -25,7 +25,7 @@ class TradingSimulator:
         self.investment_per_trade = 1000.0
 
         # TP / SL
-        self.take_profit = 0.005   # +0.5%
+        self.take_profit = 0.01    # +1%
         self.stop_loss = -0.01     # -1%
 
     # =========================
@@ -145,7 +145,7 @@ class TradingSimulator:
 
                 self.last_buy_price = None
 
-                self.cooldown = 2
+                self.cooldown = 1
 
                 save_trade(
                     current_time,
