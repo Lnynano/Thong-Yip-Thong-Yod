@@ -16,6 +16,7 @@ Layout (top to bottom):
 """
 
 import sys, os, json, time
+import html
 import numpy as np
 import gradio as gr
 
@@ -345,12 +346,12 @@ def _decision_html(decision: str, confidence: int, reasoning: str,
     regime_color = regime_colors.get(regime, "#555555")
 
     # Confluence bar (filled blocks)
-    filled = int(round(confluence))
+    filled = max(0, min(10, int(round(confluence))))
     conf_bar = "█" * filled + "░" * (10 - filled)
     conf_color = "#c9f002" if confluence >= 6 else "#f0a002" if confluence >= 4 else "#cc3333"
 
     lines = "".join(
-        f'<div style="margin:3px 0; color:#888; font-size:0.88em;">{l}</div>'
+        f'<div style="margin:3px 0; color:#888; font-size:0.88em;">{html.escape(l)}</div>'
         for l in reasoning.split("\n") if l.strip()
     )
 
@@ -368,7 +369,7 @@ def _decision_html(decision: str, confidence: int, reasoning: str,
     factors_html = ""
     if key_factors:
         items = "".join(
-            f'<div style="color:#666; font-size:0.82em; margin:2px 0;">▸ {f}</div>'
+            f'<div style="color:#666; font-size:0.82em; margin:2px 0;">▸ {html.escape(f)}</div>'
             for f in key_factors[:4]
         )
         factors_html = f"""
@@ -382,7 +383,7 @@ def _decision_html(decision: str, confidence: int, reasoning: str,
     if risk_note and risk_note.strip():
         risk_html = f"""
       <div style="margin-top:8px; color:#555; font-size:0.8em;">
-        ⚠ {risk_note}
+        ⚠ {html.escape(risk_note)}
       </div>"""
 
     # SL / TP suggestion from Bollinger Bands
