@@ -303,6 +303,117 @@ def get_signal_summary(df: pd.DataFrame) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
+# Confluence Score  (0–10 scale for UI display)
+# ─────────────────────────────────────────────────────────────
+def calculate_confluence_score(df: pd.DataFrame, news_sentiment: str = "NEUTRAL") -> float:
+    """
+    Combine RSI, MACD, Bollinger Bands, and news sentiment into a single
+    0–10 confluence score.
+
+    Scoring:
+      RSI < 30  (oversold)   : +2   |  RSI > 70 (overbought): -2
+      RSI < 40               : +1   |  RSI > 60             : -1
+      MACD histogram > 0     : +1.5 |  histogram < 0        : -1.5
+      BB %B < 0.30           : +1.5 |  %B > 0.70            : -1.5
+      News BULLISH           : +1.5 |  News BEARISH          : -1.5
+
+    Raw range: [-6.5, +6.5]  → mapped linearly to [0, 10].
+
+    Args:
+        df (pd.DataFrame): DataFrame with a 'Close' column (≥30 rows).
+        news_sentiment (str): "BULLISH", "BEARISH", or "NEUTRAL".
+
+    Returns:
+        float: Score from 0.0 (extremely bearish) to 10.0 (extremely bullish).
+    """
+    try:
+        rsi  = calculate_rsi(df)
+        macd = calculate_macd(df)
+        bb   = calculate_bollinger_bands(df)
+
+        raw = 0.0
+
+        # RSI component
+        if rsi < 30:
+            raw += 2.0
+        elif rsi < 40:
+            raw += 1.0
+        elif rsi > 70:
+            raw -= 2.0
+        elif rsi > 60:
+            raw -= 1.0
+
+        # MACD component
+        if macd["histogram"] > 0:
+            raw += 1.5
+        else:
+            raw -= 1.5
+
+        # Bollinger Bands %B component
+        if bb["percent_b"] < 0.30:
+            raw += 1.5
+        elif bb["percent_b"] > 0.70:
+            raw -= 1.5
+
+        # News sentiment component
+        if news_sentiment == "BULLISH":
+            raw += 1.5
+        elif news_sentiment == "BEARISH":
+            raw -= 1.5
+
+        # Map [-6.5, +6.5] → [0, 10]
+        score = (raw + 6.5) / 13.0 * 10.0
+        score = max(0.0, min(10.0, score))
+        return round(score, 1)
+
+    except Exception as e:
+        print(f"[tech.py] Error calculating confluence score: {e}")
+        return 5.0
+
+
+# ─────────────────────────────────────────────────────────────
+# Market Regime Detection
+# ─────────────────────────────────────────────────────────────
+def calculate_market_regime(df: pd.DataFrame) -> str:
+    """
+    Classify the current market regime from price action.
+
+    Rules (evaluated in order):
+      1. VOLATILE    : BB bandwidth > 0.04  (high volatility squeeze breakout)
+      2. TRENDING UP : MACD histogram > 0 AND price > SMA20
+      3. TRENDING DOWN: MACD histogram < 0 AND price < SMA20
+      4. RANGING     : everything else
+
+    Args:
+        df (pd.DataFrame): DataFrame with a 'Close' column (≥20 rows).
+
+    Returns:
+        str: "TRENDING UP", "TRENDING DOWN", "RANGING", or "VOLATILE"
+    """
+    try:
+        macd = calculate_macd(df)
+        bb   = calculate_bollinger_bands(df)
+
+        close = df["Close"]
+        sma20 = float(close.rolling(20).mean().iloc[-1])
+        current_price = float(close.iloc[-1])
+
+        bandwidth = bb["bandwidth"]
+
+        if macd["histogram"] > 0 and current_price > sma20:
+            return "TRENDING UP"
+        if macd["histogram"] < 0 and current_price < sma20:
+            return "TRENDING DOWN"
+        if bandwidth > 0.04:
+            return "VOLATILE"
+        return "RANGING"
+
+    except Exception as e:
+        print(f"[tech.py] Error calculating market regime: {e}")
+        return "RANGING"
+
+
+# ─────────────────────────────────────────────────────────────
 # Standalone testing
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
