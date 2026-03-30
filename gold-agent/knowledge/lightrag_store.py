@@ -17,10 +17,13 @@ Models:
 Storage: data/lightrag/ (persisted alongside portfolio.json)
 """
 
+import asyncio
 import concurrent.futures
 import hashlib
 import os
 from datetime import datetime
+
+import numpy as np
 
 WORKING_DIR   = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "data", "lightrag"))
 SEED_FILE     = os.path.join(os.path.dirname(__file__), "gold_knowledge.txt")
@@ -32,9 +35,27 @@ _anthropic_client = None
 # Single-threaded executor: all LightRAG ops run here, never in Gradio's loop
 _executor         = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="lightrag")
 
+# ── Persistent event loop for the LightRAG thread ────────────────────────────
+# asyncio.run() creates a NEW loop each call — LightRAG's internal worker
+# queues get bound to the first loop and break on the second call.
+# Fix: create ONE loop and reuse it for every op in the lightrag thread.
+_loop: asyncio.AbstractEventLoop | None = None
+
 # ── Dedup guard: skip insert if exact same headlines were inserted before ──
 # Saves ~5-10 Haiku calls per duplicate insert (LightRAG entity extraction)
 _last_inserted_hash: str | None = None
+
+
+def _run_async(coro):
+    """
+    Run an async coroutine on the persistent LightRAG event loop.
+    Must only be called from inside _executor (the lightrag thread).
+    """
+    global _loop
+    if _loop is None or _loop.is_closed():
+        _loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_loop)
+    return _loop.run_until_complete(coro)
 
 
 def _get_anthropic_client():
@@ -53,11 +74,8 @@ def _get_st_model():
     return _st_model
 
 
-import asyncio
-
-
 async def _llm_func(prompt, system_prompt=None, history_messages=None, **kwargs) -> str:
-    # history_messages is provided by LightRAG for multi-turn extraction but not forwarded
+    """Sync Anthropic call wrapped as async for LightRAG compatibility."""
     client = _get_anthropic_client()
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
@@ -69,12 +87,22 @@ async def _llm_func(prompt, system_prompt=None, history_messages=None, **kwargs)
     return response.content[0].text
 
 
-async def _embed_func(texts: list[str]) -> list[list[float]]:
+async def _embed_func(texts: list[str]) -> np.ndarray:
+    """
+    Return embeddings as a numpy array (NOT a Python list).
+    LightRAG's nano_vector_db_impl calls result.size which is a numpy attribute.
+    Returning .tolist() was causing 'list has no attribute size' errors.
+    """
     model = _get_st_model()
-    return model.encode(texts, convert_to_numpy=True).tolist()
+    return model.encode(texts, convert_to_numpy=True)   # numpy array, shape (N, 384)
 
 
 def _get_rag():
+    """
+    Initialise LightRAG exactly once inside the lightrag thread.
+    Uses the persistent _loop so LightRAG's internal async workers
+    stay bound to the same event loop across all calls.
+    """
     global _rag
     if _rag is not None:
         return _rag
@@ -94,14 +122,13 @@ def _get_rag():
         ),
     )
 
-    # Newer lightrag-hku versions require explicit async storage initialisation.
-    # This runs inside the single-threaded executor (no running event loop),
-    # so asyncio.run() is safe here.
+    # Newer lightrag-hku requires explicit storage initialisation.
+    # Run on the persistent loop so workers bind to it permanently.
     try:
-        asyncio.run(_rag.initialize_storages())
+        _run_async(_rag.initialize_storages())
         print("[lightrag_store.py] Storages initialised.")
     except Exception as e:
-        print(f"[lightrag_store.py] Storage init warning (may be ok on older versions): {e}")
+        print(f"[lightrag_store.py] Storage init warning (ok on older versions): {e}")
 
     if not os.path.exists(SEED_SENTINEL):
         _seed(_rag)
@@ -115,9 +142,8 @@ def _seed(rag) -> None:
         with open(SEED_FILE, "r", encoding="utf-8") as f:
             content = f.read().strip()
         if content:
-            # Use async insert for newer lightrag API; fall back to sync.
             try:
-                asyncio.run(rag.ainsert(content))
+                _run_async(rag.ainsert(content))
             except AttributeError:
                 rag.insert(content)
             with open(SEED_SENTINEL, "w", encoding="utf-8") as f:
@@ -134,9 +160,8 @@ def _insert_in_thread(headlines: list[str]) -> None:
         f"[{timestamp}] Gold market news headlines:\n"
         + "\n".join(f"- {h}" for h in headlines)
     )
-    # Use async insert for newer lightrag API; fall back to sync.
     try:
-        asyncio.run(rag.ainsert(text))
+        _run_async(rag.ainsert(text))
     except AttributeError:
         rag.insert(text)
 
@@ -144,9 +169,8 @@ def _insert_in_thread(headlines: list[str]) -> None:
 def _query_in_thread(question: str) -> str:
     from lightrag import QueryParam
     rag = _get_rag()
-    # Use async query for newer lightrag API; fall back to sync.
     try:
-        result = asyncio.run(rag.aquery(question, param=QueryParam(mode="hybrid")))
+        result = _run_async(rag.aquery(question, param=QueryParam(mode="hybrid")))
     except AttributeError:
         result = rag.query(question, param=QueryParam(mode="hybrid"))
     return result or ""
@@ -169,7 +193,6 @@ def insert_headlines(headlines: list[str]) -> None:
     if not headlines:
         return
 
-    # Hash check — skip if identical to last insert
     current_hash = hashlib.md5("|".join(headlines).encode()).hexdigest()
     if current_hash == _last_inserted_hash:
         print("[lightrag_store.py] Headlines unchanged → skipping insert (saved Haiku calls)")
