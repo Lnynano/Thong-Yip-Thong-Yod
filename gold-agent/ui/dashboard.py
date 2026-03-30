@@ -31,6 +31,20 @@ import matplotlib.dates as mdates
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+# ┌─────────────────────────────────────────────────────────────────────────────
+# │  DEV_MODE FLAG
+# │  Set to True  → all developer features are visible (local dev)
+# │  Set to False → developer features are hidden     (production deploy)
+# │
+# │  Features controlled by this flag:
+# │    1. REFRESH MODE radio  (REAL / TEST 15-sec)
+# │    2. TRADE MODE toggle   (enable paper trading)
+# │    3. RESET PORTFOLIO button
+# │    4. CLEAR LOG button
+# │    5. Backtest tab
+# └─────────────────────────────────────────────────────────────────────────────
+DEV_MODE: bool = True   # ← change to False before deploying
+
 _INTERVALS = {"REAL": 300, "TEST": 15}
 _current_mode: str = "REAL"
 
@@ -1090,8 +1104,8 @@ def build_ui() -> gr.Blocks:
           </span>
         </div>""")
 
-        # ── Trade Mode toggle (top of page, always visible) ──
-        with gr.Row():
+        # ── Trade Mode toggle — hidden in production (DEV_MODE=False) ──
+        with gr.Row(visible=DEV_MODE):
             trade_mode_toggle = gr.Checkbox(
                 label="TRADE MODE  —  enable to execute paper trades automatically",
                 value=False,
@@ -1104,8 +1118,8 @@ def build_ui() -> gr.Blocks:
                 '</div>'
             )
 
-        # ── Mode selector (REAL / TEST) ──────────────────────
-        with gr.Row():
+        # ── Mode selector (REAL / TEST) — hidden in production (DEV_MODE=False) ──
+        with gr.Row(visible=DEV_MODE):
             mode_radio = gr.Radio(
                 choices=["REAL", "TEST"],
                 value="REAL",
@@ -1167,7 +1181,8 @@ def build_ui() -> gr.Blocks:
                     share_btn = gr.Button("📤  SHARE P&L CARD",
                                           variant="secondary", scale=1, size="sm")
                     pl_card_file = gr.File(label="Download P&L Card", visible=False)
-                with gr.Row():
+                # RESET PORTFOLIO — hidden in production (DEV_MODE=False)
+                with gr.Row(visible=DEV_MODE):
                     reset_btn = gr.Button("↺  RESET PORTFOLIO",
                                          variant="secondary", scale=1, size="sm")
                     gr.HTML('<div style="color:#333; font-size:0.75em; padding:8px; '
@@ -1189,14 +1204,15 @@ def build_ui() -> gr.Blocks:
                              "Price THB (baht-wt)", "RSI", "MACD", "Sharpe", "Reasoning"],
                     label="", interactive=False, wrap=True,
                 )
-                with gr.Row():
+                # CLEAR LOG — hidden in production (DEV_MODE=False)
+                with gr.Row(visible=DEV_MODE):
                     clear_log_btn = gr.Button("🗑  CLEAR LOG",
                                              variant="secondary", scale=1, size="sm")
 
             with gr.Tab("News"):
                 news_html = gr.HTML()
 
-            with gr.Tab("Backtest"):
+            with gr.Tab("Backtest", visible=DEV_MODE):
                 gr.HTML(
                     '<div style="font-family:Courier New,monospace; color:#555; '
                     'font-size:0.75em; padding:8px 0; letter-spacing:0.08em;">'
