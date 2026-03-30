@@ -209,13 +209,20 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-analysis_log.csv
-
 # Git worktrees
 .worktrees/
 
 claude.md
-portfolio.json
 .gradio
 
+# ── Project data files (never commit runtime state) ───────────────────────────
+portfolio.json
+analysis_log.csv
+gold-agent/data/*.json
+gold-agent/data/*.csv
 gold-agent/data/lightrag/
+
+# ── Environment / secrets ──────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example

@@ -2,7 +2,11 @@
 trader/paper_engine.py
 Paper trading engine — simulates trades with real market prices,
 tracks portfolio state, P&L, win rate, and trade history.
-No real money is touched. State persists to data/portfolio.json.
+No real money is touched.
+
+Storage strategy (auto-detected):
+  - MONGODB_URI set  →  MongoDB Atlas (persistent across deploys)
+  - MONGODB_URI not set  →  local data/portfolio.json (dev fallback)
 
 Starting balance : 1,500 THB  (configurable)
 Min trade size   : 1,000 THB  (mirrors AOM NOW minimum)
@@ -14,15 +18,56 @@ Sizing           : 95% of available balance per trade
 import os
 import json
 from datetime import datetime
+from dotenv import load_dotenv
 
-PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "portfolio.json")
+load_dotenv()
+
+PORTFOLIO_FILE  = os.path.join(os.path.dirname(__file__), "..", "data", "portfolio.json")
 DEFAULT_BALANCE = 1500.0
 MIN_TRADE_THB   = 1000.0
 CONF_THRESHOLD  = 65
 
+# ─────────────────────────────────────────────────────────────
+# MongoDB client (lazy init — only when MONGODB_URI is set)
+# ─────────────────────────────────────────────────────────────
+_mongo_client = None
+_mongo_db     = None
 
+
+def _get_mongo_collection(name: str):
+    """Return a MongoDB collection, or None if MONGODB_URI is not configured."""
+    global _mongo_client, _mongo_db
+    uri = os.getenv("MONGODB_URI", "").strip()
+    if not uri:
+        return None
+    try:
+        if _mongo_client is None:
+            from pymongo import MongoClient
+            _mongo_client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+            _mongo_db     = _mongo_client["gold_agent"]
+            print("[paper_engine.py] Connected to MongoDB Atlas.")
+        return _mongo_db[name]
+    except Exception as e:
+        print(f"[paper_engine.py] MongoDB connection failed: {e}")
+        return None
+
+
+# ─────────────────────────────────────────────────────────────
+# Load / Save  (MongoDB first, JSON fallback)
+# ─────────────────────────────────────────────────────────────
 def _load() -> dict:
-    """Load portfolio state from JSON, or create a fresh one."""
+    """Load portfolio state from MongoDB or local JSON fallback."""
+    col = _get_mongo_collection("portfolio")
+    if col is not None:
+        try:
+            doc = col.find_one({"_id": "main"})
+            if doc:
+                doc.pop("_id", None)
+                return doc
+        except Exception as e:
+            print(f"[paper_engine.py] MongoDB load failed, using JSON: {e}")
+
+    # JSON fallback
     if os.path.exists(PORTFOLIO_FILE):
         try:
             with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
@@ -33,15 +78,27 @@ def _load() -> dict:
 
 
 def _save(state: dict) -> None:
-    """Persist portfolio state to JSON."""
+    """Persist portfolio state to MongoDB or local JSON fallback."""
+    col = _get_mongo_collection("portfolio")
+    if col is not None:
+        try:
+            col.replace_one({"_id": "main"}, {"_id": "main", **state}, upsert=True)
+            return
+        except Exception as e:
+            print(f"[paper_engine.py] MongoDB save failed, using JSON: {e}")
+
+    # JSON fallback
     try:
         os.makedirs(os.path.dirname(PORTFOLIO_FILE), exist_ok=True)
         with open(PORTFOLIO_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        print(f"[paper_engine.py] Save failed: {e}")
+        print(f"[paper_engine.py] JSON save failed: {e}")
 
 
+# ─────────────────────────────────────────────────────────────
+# State helpers
+# ─────────────────────────────────────────────────────────────
 def _fresh_state(initial_balance: float = DEFAULT_BALANCE) -> dict:
     """Return a blank portfolio state."""
     return {
@@ -68,6 +125,9 @@ def _record_equity(state: dict, price_thb: float) -> None:
         state["equity_history"] = state["equity_history"][-500:]
 
 
+# ─────────────────────────────────────────────────────────────
+# Core trading logic
+# ─────────────────────────────────────────────────────────────
 def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dict:
     """
     Evaluate the agent decision and simulate a trade if conditions are met.
@@ -107,7 +167,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
         size_bw = cost / price_thb
         state["balance"] -= cost
         state["open_position"] = {
-            "direction":  "BUY",
+            "direction":   "BUY",
             "entry_price": price_thb,
             "size_bw":     round(size_bw, 6),
             "cost_thb":    round(cost, 2),
@@ -153,6 +213,9 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
     return {"action": "HOLD", "reason": "Signal is HOLD or no matching position"}
 
 
+# ─────────────────────────────────────────────────────────────
+# Portfolio queries
+# ─────────────────────────────────────────────────────────────
 def get_portfolio_summary(current_price_thb: float = 0.0) -> dict:
     """
     Return all portfolio metrics for dashboard display.
@@ -178,13 +241,13 @@ def get_portfolio_summary(current_price_thb: float = 0.0) -> dict:
     if pos and current_price_thb > 0:
         unrealized_pnl = (pos["size_bw"] * current_price_thb) - pos["cost_thb"]
         open_info = {
-            "entry_price":     pos["entry_price"],
-            "current_price":   current_price_thb,
-            "size_bw":         pos["size_bw"],
-            "cost_thb":        pos["cost_thb"],
-            "unrealized":      round(unrealized_pnl, 2),
-            "unrealized_pct":  round(unrealized_pnl / pos["cost_thb"] * 100, 2),
-            "entry_time":      pos["entry_time"],
+            "entry_price":    pos["entry_price"],
+            "current_price":  current_price_thb,
+            "size_bw":        pos["size_bw"],
+            "cost_thb":       pos["cost_thb"],
+            "unrealized":     round(unrealized_pnl, 2),
+            "unrealized_pct": round(unrealized_pnl / pos["cost_thb"] * 100, 2),
+            "entry_time":     pos["entry_time"],
         }
 
     pos_value    = (pos["size_bw"] * current_price_thb) if (pos and current_price_thb > 0) \
