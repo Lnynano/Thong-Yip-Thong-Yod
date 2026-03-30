@@ -205,6 +205,45 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
             rsi_signal  = "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else "NEUTRAL"
             macd_signal = "BULLISH" if macd["histogram"] > 0 else "BEARISH"
 
+            # ── BUY/SELL Score (0-5 each) ─────────────────────────────────────
+            # Pre-score signals so Claude has quantified hints, reduces hallucination
+            buy_score  = 0
+            sell_score = 0
+
+            # RSI
+            if rsi < 30:   buy_score  += 2   # oversold = strong buy
+            elif rsi < 45: buy_score  += 1
+            if rsi > 70:   sell_score += 2   # overbought = strong sell
+            elif rsi > 60: sell_score += 1
+
+            # MACD histogram
+            if macd["histogram"] > 0:  buy_score  += 1
+            else:                      sell_score += 1
+
+            # Bollinger Bands %B
+            if bb["percent_b"] < 0.2:  buy_score  += 1   # near lower band
+            elif bb["percent_b"] > 0.8: sell_score += 1  # near upper band
+
+            # MACD crossover (macd line vs signal line)
+            if macd["macd"] > macd["signal"]:  buy_score  += 1
+            else:                               sell_score += 1
+
+            # Daily market bias (cached — free, runs once/day)
+            daily_bias = "Sideways"
+            daily_strength = "Weak"
+            try:
+                from agent.daily_market_agent import get_daily_market
+                dm = get_daily_market()
+                daily_bias     = dm.get("daily_trend", "Sideways")
+                daily_strength = dm.get("trend_strength", "Weak")
+                daily_summary  = dm.get("daily_summary", "")
+                if daily_bias == "Uptrend":
+                    buy_score  += 1 if daily_strength in ("Strong", "Moderate") else 0
+                elif daily_bias == "Downtrend":
+                    sell_score += 1 if daily_strength in ("Strong", "Moderate") else 0
+            except Exception:
+                daily_summary = ""
+
             # Multi-timeframe: H1 context
             h1_context = {}
             try:
@@ -232,6 +271,14 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
             result = {
                 "note": "All values are pre-computed deterministically. Do NOT recalculate.",
                 "timeframe": "D1 (primary)",
+                "pre_scored_signals": {
+                    "buy_score":       f"{min(buy_score, 5)} / 5",
+                    "sell_score":      f"{min(sell_score, 5)} / 5",
+                    "bias":            "BUY" if buy_score > sell_score else "SELL" if sell_score > buy_score else "NEUTRAL",
+                    "daily_trend":     daily_bias,
+                    "trend_strength":  daily_strength,
+                    "note": "Scores are hints only — use your judgment. News can override math.",
+                },
                 "rsi": {
                     "value"  : rsi,
                     "signal" : rsi_signal,
@@ -262,6 +309,8 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
                     "H1 and D1 aligned = stronger signal. "
                     "H1 and D1 diverging = wait for confirmation."
                 )
+            if daily_summary:
+                result["daily_macro_context"] = daily_summary
             return json.dumps(result)
 
         # ── Tool: get_news ───────────────────────────────────────────────────
