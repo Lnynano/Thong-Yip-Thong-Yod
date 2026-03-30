@@ -19,6 +19,10 @@ import sys, os, json, time
 import html
 import numpy as np
 import gradio as gr
+from datetime import timezone, timedelta
+
+# Thai timezone UTC+7 (no pytz needed)
+THAI_TZ = timezone(timedelta(hours=7))
 
 import matplotlib
 matplotlib.use("Agg")
@@ -27,22 +31,32 @@ import matplotlib.dates as mdates
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-AUTO_REFRESH_SECONDS = 300
+_INTERVALS = {"REAL": 300, "TEST": 15}
+_current_mode: str = "REAL"
 
 # Tracks when the last full analysis ran — used for countdown display
 _last_refresh_time: float = time.time()
 
 
+def _set_mode(mode: str) -> None:
+    """Switch between REAL and TEST mode; resets countdown."""
+    global _current_mode, _last_refresh_time
+    _current_mode = mode
+    _last_refresh_time = time.time()
+
+
 def _tick_countdown() -> str:
     """Lightweight 1-second tick — only returns the countdown string."""
+    interval  = _INTERVALS.get(_current_mode, 300)
     elapsed   = time.time() - _last_refresh_time
-    remaining = max(0, AUTO_REFRESH_SECONDS - int(elapsed))
+    remaining = max(0, interval - int(elapsed))
     mins      = remaining // 60
     secs      = remaining % 60
-    filled    = int((elapsed / AUTO_REFRESH_SECONDS) * 20)
+    filled    = int((elapsed / interval) * 20)
     filled    = min(filled, 20)
     bar       = "#" * filled + "-" * (20 - filled)   # ASCII-safe, renders in any font
-    return f"Next auto-refresh in  {mins}:{secs:02d}  [{bar}]"
+    label     = "TEST 15s" if _current_mode == "TEST" else "REAL 5min"
+    return f"[{label}]  Next refresh in  {mins}:{secs:02d}  [{bar}]"
 
 # ─────────────────────────────────────────────────────────────
 # Dark PNS-style CSS
@@ -94,6 +108,20 @@ button.primary { background: #c9f002 !important; color: #000 !important;
 button.secondary { background: #1a1a1a !important; color: #666 !important;
                    border: 1px solid #2a2a2a !important;
                    font-family: 'Courier New', monospace !important; }
+
+/* ── Radio & Checkbox choice text — override dark label rule ── */
+input[type="radio"] ~ span,
+input[type="radio"] + span,
+input[type="checkbox"] ~ span,
+input[type="checkbox"] + span {
+    color: #cccccc !important;
+    font-family: 'Courier New', monospace !important;
+    font-size: 0.88em !important;
+    letter-spacing: 0.08em !important;
+}
+input[type="radio"], input[type="checkbox"] {
+    accent-color: #c9f002 !important;
+}
 
 /* ── Dataframe / table ───────────────────────────────── */
 .svelte-table, table, .gr-dataframe table {
@@ -843,7 +871,8 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         port_block   = _portfolio_html(portfolio)
         outcome_bar  = _outcome_bar_html(outcomes)
         trade_table  = _trade_table_html(trades, portfolio.get("open_position"))
-        last_updated = f"Last updated: {fetch_time}  ·  auto-refresh every 5 min"
+        thai_now     = __import__('datetime').datetime.now(THAI_TZ).strftime("%H:%M:%S")
+        last_updated = f"Last updated: {thai_now} (TH)  ·  auto-refresh every 5 min"
         tm_html      = _trade_mode_html(trade_mode)
 
         # Status bar message
@@ -947,6 +976,22 @@ def build_ui() -> gr.Blocks:
                 '<div style="font-family:Courier New,monospace; color:#444; '
                 'font-size:0.75em; padding:12px 0; line-height:1.5em;">'
                 'OFF = analysis only &nbsp;|&nbsp; ON = trades execute on BUY/SELL ≥ 65% conf'
+                '</div>'
+            )
+
+        # ── Mode selector (REAL / TEST) ──────────────────────
+        with gr.Row():
+            mode_radio = gr.Radio(
+                choices=["REAL", "TEST"],
+                value="REAL",
+                label="REFRESH MODE  —  REAL = every 5 min  ·  TEST = every 15 sec",
+                interactive=True,
+                scale=3,
+            )
+            gr.HTML(
+                '<div style="font-family:Courier New,monospace; color:#444; '
+                'font-size:0.75em; padding:12px 0; line-height:1.5em;">'
+                'Switch to TEST for fast 15-second cycles when market is closed'
                 '</div>'
             )
 
@@ -1064,16 +1109,28 @@ def build_ui() -> gr.Blocks:
             outputs=outputs,
         )
 
-        # Auto-refresh every 5 minutes — runs full analysis
+        # Mode selector wires to module-level _current_mode
+        mode_radio.change(fn=_set_mode, inputs=[mode_radio], outputs=[])
+
+        # Two timers: REAL (300s) and TEST (15s).
+        # Each checks _current_mode before running — only the active mode fires.
+        def _run_if_real(trade_mode):
+            if _current_mode != "REAL":
+                return [gr.update()] * len(outputs)
+            return list(run_full_analysis(trade_mode))
+
+        def _run_if_test(trade_mode):
+            if _current_mode != "TEST":
+                return [gr.update()] * len(outputs)
+            return list(run_full_analysis(trade_mode))
+
         try:
-            analysis_timer = gr.Timer(value=AUTO_REFRESH_SECONDS)
-            analysis_timer.tick(
-                fn=run_full_analysis,
-                inputs=[trade_mode_toggle],
-                outputs=outputs,
-            )
+            real_timer = gr.Timer(value=300)
+            real_timer.tick(fn=_run_if_real, inputs=[trade_mode_toggle], outputs=outputs)
+
+            test_timer = gr.Timer(value=15)
+            test_timer.tick(fn=_run_if_test, inputs=[trade_mode_toggle], outputs=outputs)
         except Exception as e:
-            # Fallback: older Gradio builds — warn but don't crash
             print(f"[dashboard] gr.Timer not available ({e}); auto-refresh disabled.")
 
         # Countdown ticker — fires every 1 second, very lightweight

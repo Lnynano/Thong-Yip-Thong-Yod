@@ -17,8 +17,11 @@ Sizing           : 95% of available balance per trade
 
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
+
+# Thai timezone UTC+7
+_THAI_TZ = timezone(timedelta(hours=7))
 
 load_dotenv()
 
@@ -107,7 +110,7 @@ def _fresh_state(initial_balance: float = DEFAULT_BALANCE) -> dict:
         "open_position":   None,
         "closed_trades":   [],
         "equity_history":  [
-            {"time": datetime.now().strftime("%Y-%m-%d %H:%M"), "equity": initial_balance}
+            {"time": datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M"), "equity": initial_balance}
         ],
     }
 
@@ -118,7 +121,7 @@ def _record_equity(state: dict, price_thb: float) -> None:
     value  = (pos["size_bw"] * price_thb) if pos else 0.0
     equity = state["balance"] + value
     state["equity_history"].append({
-        "time":   datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "time":   datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M"),
         "equity": round(equity, 2),
     })
     if len(state["equity_history"]) > 500:
@@ -154,7 +157,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
         return {"action": "SKIP",
                 "reason": f"Confidence {confidence}% < {CONF_THRESHOLD}% threshold"}
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     # ── Open long ────────────────────────────────────────────
     if decision == "BUY" and state["open_position"] is None:

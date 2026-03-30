@@ -10,8 +10,11 @@ Storage strategy (auto-detected):
 import os
 import csv
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
+
+# Thai timezone UTC+7
+_THAI_TZ = timezone(timedelta(hours=7))
 
 load_dotenv()
 
@@ -52,7 +55,7 @@ def log_analysis(decision: str, confidence: int, price_usd: str,
                  price_thb: str, rsi: str, macd: str,
                  sharpe: str, reasoning: str) -> None:
     """Append one analysis result to MongoDB or CSV fallback."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    timestamp = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M")
     short_reason = reasoning[:80] + "..." if len(reasoning) > 80 else reasoning
 
     # ── MongoDB ──────────────────────────────────────────────
