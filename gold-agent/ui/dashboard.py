@@ -735,6 +735,131 @@ def _news_html(headlines: list, sentiment: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
+# Backtest HTML builder
+# ─────────────────────────────────────────────────────────────
+def _backtest_summary_html(summary: dict) -> str:
+    """Render backtest summary stats card."""
+    ret     = summary.get("return_pct", 0)
+    col     = "#c9f002" if ret >= 0 else "#cc3333"
+    sign    = "+" if ret >= 0 else ""
+    pnl     = summary.get("total_pnl", 0)
+    pnl_col = "#c9f002" if pnl >= 0 else "#cc3333"
+
+    def stat(label, val, vc="#c8c8c8"):
+        return (f'<div style="flex:1; min-width:130px; padding:10px 14px; '
+                f'background:#111; border:1px solid #1e1e1e; border-radius:4px; margin:4px;">'
+                f'<div style="color:#444; font-size:0.68em; letter-spacing:0.12em;">{label}</div>'
+                f'<div style="color:{vc}; font-size:1.1em; font-weight:700;">{val}</div></div>')
+
+    return f"""
+<div style="font-family:'Courier New',monospace; padding:16px 20px;
+            background:#0f0f0f; border:1px solid #1e1e1e; border-radius:6px; margin-bottom:12px;">
+  <div style="color:#555; font-size:0.7em; letter-spacing:0.15em; margin-bottom:10px;">
+    BACKTEST RESULTS &nbsp;·&nbsp; {summary.get('period_start','—')} → {summary.get('period_end','—')}
+  </div>
+  <div style="display:flex; flex-wrap:wrap;">
+    {stat("RETURN",        f"{sign}{ret:.2f}%",                 col)}
+    {stat("FINAL EQUITY",  f"฿{summary.get('final_equity',0):,.2f}")}
+    {stat("TOTAL P&L",     f"{'+'if pnl>=0 else ''}฿{pnl:,.2f}", pnl_col)}
+    {stat("WIN RATE",      f"{summary.get('win_rate',0):.1f}%")}
+    {stat("TRADES",        str(summary.get('total_trades',0)))}
+    {stat("WINS",          str(summary.get('wins',0)),           "#c9f002")}
+    {stat("LOSSES",        str(summary.get('losses',0)),         "#cc3333")}
+    {stat("DAYS RUN",      str(summary.get('days_run',0)))}
+  </div>
+</div>"""
+
+
+def _backtest_trades_html(closed_trades: list) -> str:
+    """Render closed trades table for backtest."""
+    if not closed_trades:
+        return '<div style="color:#555; padding:16px; font-family:Courier New,monospace;">No closed trades.</div>'
+
+    rows = ""
+    for t in closed_trades:
+        oc  = "#c9f002" if t["outcome"] == "WIN" else "#cc3333"
+        sym = "▲" if t["outcome"] == "WIN" else "▼"
+        pnl_s = f"{'+'if t['pnl_thb']>=0 else ''}฿{t['pnl_thb']:,.2f}"
+        rows += (
+            f'<tr>'
+            f'<td style="padding:6px 10px; color:#888;">{t["entry_date"]}</td>'
+            f'<td style="padding:6px 10px; color:#888;">{t["exit_date"]}</td>'
+            f'<td style="padding:6px 10px; color:#bbb;">฿{t["entry_price"]:,.0f}</td>'
+            f'<td style="padding:6px 10px; color:#bbb;">฿{t["exit_price"]:,.0f}</td>'
+            f'<td style="padding:6px 10px; color:{oc}; font-weight:700;">{pnl_s}</td>'
+            f'<td style="padding:6px 10px; color:{oc}; font-weight:700;">{sym} {t["outcome"]}</td>'
+            f'</tr>'
+        )
+
+    return f"""
+<div style="font-family:'Courier New',monospace; overflow-x:auto;">
+  <table style="width:100%; border-collapse:collapse; background:#0f0f0f; color:#bbb;">
+    <thead>
+      <tr style="border-bottom:1px solid #222;">
+        <th style="color:#444; text-align:left; padding:8px 10px; font-size:0.75em; letter-spacing:0.1em;">ENTRY DATE</th>
+        <th style="color:#444; text-align:left; padding:8px 10px; font-size:0.75em; letter-spacing:0.1em;">EXIT DATE</th>
+        <th style="color:#444; text-align:left; padding:8px 10px; font-size:0.75em; letter-spacing:0.1em;">ENTRY ฿</th>
+        <th style="color:#444; text-align:left; padding:8px 10px; font-size:0.75em; letter-spacing:0.1em;">EXIT ฿</th>
+        <th style="color:#444; text-align:left; padding:8px 10px; font-size:0.75em; letter-spacing:0.1em;">P&L</th>
+        <th style="color:#444; text-align:left; padding:8px 10px; font-size:0.75em; letter-spacing:0.1em;">RESULT</th>
+      </tr>
+    </thead>
+    <tbody>{rows}</tbody>
+  </table>
+</div>"""
+
+
+def _backtest_equity_chart(daily_log: list):
+    """Build equity curve chart from backtest daily log."""
+    import matplotlib.pyplot as plt
+    if not daily_log:
+        return None
+    BG   = "#0b0b0b"
+    LINE = "#c9f002"
+    dates   = [d["date"] for d in daily_log]
+    equities= [d["equity_thb"] for d in daily_log]
+    fig, ax = plt.subplots(figsize=(12, 3), facecolor=BG)
+    ax.set_facecolor(BG)
+    for spine in ax.spines.values():
+        spine.set_color("#1e1e1e")
+    ax.tick_params(colors="#444", labelsize=8)
+    ax.grid(True, color="#1a1a1a", linewidth=0.6)
+    ax.plot(dates, equities, color=LINE, linewidth=1.8)
+    ax.fill_between(dates, equities, min(equities) * 0.999, alpha=0.1, color=LINE)
+    ax.axhline(y=1500, color="#444", linewidth=1, linestyle="--", alpha=0.5)
+    ax.set_ylabel("Equity (฿)", color="#555", fontsize=9)
+    ax.set_title("BACKTEST  —  EQUITY CURVE", color="#555", fontsize=9,
+                 loc="left", pad=8, fontfamily="Courier New")
+    step = max(1, len(dates) // 8)
+    ax.set_xticks(range(0, len(dates), step))
+    ax.set_xticklabels([dates[i] for i in range(0, len(dates), step)],
+                       rotation=30, ha="right", fontsize=7, color="#444")
+    plt.tight_layout(pad=1.0)
+    return fig
+
+
+def _run_backtest_ui() -> tuple:
+    """Called by the dashboard Run Backtest button."""
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        from backtest import run_backtest
+        result  = run_backtest()
+        summary = result["summary"]
+        trades  = result["closed_trades"]
+        log     = result["daily_log"]
+        summary_html = _backtest_summary_html(summary)
+        trades_html  = _backtest_trades_html(trades)
+        eq_chart     = _backtest_equity_chart(log)
+        status       = (f"✅ Backtest complete  ·  {summary['days_run']} days  ·  "
+                        f"Return {'+' if summary['return_pct']>=0 else ''}{summary['return_pct']:.2f}%  ·  "
+                        f"Win rate {summary['win_rate']:.1f}%")
+        return summary_html, trades_html, eq_chart, status
+    except Exception as e:
+        err = f'<div style="color:#cc3333; padding:16px; font-family:Courier New,monospace;">Backtest failed: {html.escape(str(e))}</div>'
+        return err, err, None, f"❌ Backtest error: {str(e)}"
+
+
+# ─────────────────────────────────────────────────────────────
 # Main analysis pipeline
 # ─────────────────────────────────────────────────────────────
 def run_full_analysis(trade_mode: bool = False) -> tuple:
@@ -1071,6 +1196,23 @@ def build_ui() -> gr.Blocks:
             with gr.Tab("News"):
                 news_html = gr.HTML()
 
+            with gr.Tab("Backtest"):
+                gr.HTML(
+                    '<div style="font-family:Courier New,monospace; color:#555; '
+                    'font-size:0.75em; padding:8px 0; letter-spacing:0.08em;">'
+                    'Replay 20 days of historical XAUUSD data through the Claude agent.  '
+                    'Uses embedded CSV data — no live API needed for price.  '
+                    'Each run costs ~20 Claude Sonnet calls.'
+                    '</div>'
+                )
+                bt_run_btn      = gr.Button("▶  RUN BACKTEST", variant="primary", size="sm")
+                bt_status       = gr.Textbox(value="—", label="STATUS", interactive=False, max_lines=1)
+                bt_summary_html = gr.HTML()
+                gr.Markdown("## EQUITY CURVE")
+                bt_equity_chart = gr.Plot(label="")
+                gr.Markdown("## CLOSED TRADES")
+                bt_trades_html  = gr.HTML()
+
         # ── Status bar (outside tabs, always visible) ────────
         status_box = gr.Textbox(label="STATUS  ·  last action",
                                 value="Starting...",
@@ -1201,6 +1343,13 @@ def build_ui() -> gr.Blocks:
             return get_recent_logs(50)
 
         clear_log_btn.click(fn=_clear, inputs=[], outputs=[log_table])
+
+        # ── Backtest button ───────────────────────────────────
+        bt_run_btn.click(
+            fn=_run_backtest_ui,
+            inputs=[],
+            outputs=[bt_summary_html, bt_trades_html, bt_equity_chart, bt_status],
+        )
 
     return demo
 

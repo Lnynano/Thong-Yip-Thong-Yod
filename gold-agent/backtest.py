@@ -85,7 +85,18 @@ def usd_to_thb_per_bw(price_usd: float) -> float:
     return round(thb_per_bw, 2)
 
 
-def run_backtest() -> None:
+def run_backtest() -> dict:
+    """
+    Run the backtest and return structured results for both terminal and dashboard use.
+
+    Returns:
+        dict: {
+            "daily_log"     : list of per-day records,
+            "closed_trades" : list of completed trades,
+            "summary"       : dict of key performance metrics,
+            "open_position" : dict or None if position still open at end,
+        }
+    """
     # ── Load data ─────────────────────────────────────────────────────────────
     df_full = pd.read_csv(io.StringIO(CSV_DATA), parse_dates=["Date"])
     df_full = df_full.set_index("Date")
@@ -101,7 +112,7 @@ def run_backtest() -> None:
 
     # ── Paper trading state (in-memory, no portfolio.json touched) ────────────
     balance_thb    = INITIAL_BALANCE_THB
-    open_position  = None    # dict when a trade is open
+    open_position  = None
     closed_trades  = []
     daily_log      = []
 
@@ -118,13 +129,12 @@ def run_backtest() -> None:
         print(f"  Day {i+1:2d} | {date.date()} | ${price_usd:,.2f} | ฿{price_thb:,.0f}/bw")
         print(f"{'─'*65}")
 
-        # ── Call Claude with patched data ──────────────────────────────────────
         with patch.object(fetch_module, "get_gold_price", return_value=window):
             agent = run_agent()
 
-        decision   = agent["decision"]
-        confidence = agent["confidence"]
-        reasoning  = agent["reasoning"]
+        decision    = agent["decision"]
+        confidence  = agent["confidence"]
+        reasoning   = agent["reasoning"]
         key_factors = agent.get("key_factors", [])
 
         print(f"  Decision   : {decision} @ {confidence}%")
@@ -132,7 +142,6 @@ def run_backtest() -> None:
         if key_factors:
             print(f"  Key factors: {', '.join(key_factors[:3])}")
 
-        # ── Paper trade execution ──────────────────────────────────────────────
         action  = "HOLD"
         pnl_thb = 0.0
 
@@ -179,7 +188,6 @@ def run_backtest() -> None:
             else:
                 action = "SKIP (no position)"
 
-        # ── Current equity ─────────────────────────────────────────────────────
         unrealized = 0.0
         if open_position:
             unrealized = (open_position["size_bw"] * price_thb) - open_position["cost_thb"]
@@ -211,37 +219,39 @@ def run_backtest() -> None:
     win_rate  = len(wins) / len(closed_trades) * 100 if closed_trades else 0.0
     ret_pct   = (final_equity - INITIAL_BALANCE_THB) / INITIAL_BALANCE_THB * 100
 
+    summary = {
+        "period_start"  : daily_log[0]["date"] if daily_log else "—",
+        "period_end"    : daily_log[-1]["date"] if daily_log else "—",
+        "days_run"      : len(daily_log),
+        "total_trades"  : len(closed_trades),
+        "wins"          : len(wins),
+        "losses"        : len(losses),
+        "win_rate"      : round(win_rate, 1),
+        "total_pnl"     : round(total_pnl, 2),
+        "initial"       : INITIAL_BALANCE_THB,
+        "final_equity"  : round(final_equity, 2),
+        "return_pct"    : round(ret_pct, 2),
+    }
+
     print(f"\n{'='*65}")
     print("  BACKTEST RESULTS")
     print(f"{'='*65}")
-    print(f"  Period       : {daily_log[0]['date']} → {daily_log[-1]['date']}")
-    print(f"  Days run     : {len(daily_log)}")
-    print(f"  Closed trades: {len(closed_trades)}  (wins {len(wins)}  losses {len(losses)})")
-    print(f"  Win rate     : {win_rate:.1f}%")
-    print(f"  Total P&L    : ฿{total_pnl:+,.2f}")
-    print(f"  Initial      : ฿{INITIAL_BALANCE_THB:,.2f}")
-    print(f"  Final equity : ฿{final_equity:,.2f}")
-    print(f"  Return       : {ret_pct:+.2f}%")
-
-    if open_position:
-        unrealized_final = (open_position["size_bw"] * last_price_thb) - open_position["cost_thb"]
-        print(f"\n  [OPEN POSITION]")
-        print(f"  Entered {open_position['entry_date']} @ ฿{open_position['entry_price']:,.0f}")
-        print(f"  Unrealized P&L: ฿{unrealized_final:+,.2f}")
-
-    if closed_trades:
-        print(f"\n  {'─'*63}")
-        print(f"  {'Entry':12} {'Exit':12} {'Entry ฿':>10} {'Exit ฿':>10} {'P&L ฿':>8} {'%':>6}  Result")
-        print(f"  {'─'*63}")
-        for t in closed_trades:
-            flag = "✓" if t["outcome"] == "WIN" else "✗"
-            print(
-                f"  {t['entry_date']:12} {t['exit_date']:12} "
-                f"{t['entry_price']:>10,.0f} {t['exit_price']:>10,.0f} "
-                f"{t['pnl_thb']:>+8.2f} {t['pnl_pct']:>+5.2f}%  {flag} {t['outcome']}"
-            )
-
+    print(f"  Period       : {summary['period_start']} → {summary['period_end']}")
+    print(f"  Days run     : {summary['days_run']}")
+    print(f"  Closed trades: {summary['total_trades']}  (wins {summary['wins']}  losses {summary['losses']})")
+    print(f"  Win rate     : {summary['win_rate']:.1f}%")
+    print(f"  Total P&L    : ฿{summary['total_pnl']:+,.2f}")
+    print(f"  Initial      : ฿{summary['initial']:,.2f}")
+    print(f"  Final equity : ฿{summary['final_equity']:,.2f}")
+    print(f"  Return       : {summary['return_pct']:+.2f}%")
     print(f"{'='*65}\n")
+
+    return {
+        "daily_log"     : daily_log,
+        "closed_trades" : closed_trades,
+        "summary"       : summary,
+        "open_position" : open_position,
+    }
 
 
 if __name__ == "__main__":
