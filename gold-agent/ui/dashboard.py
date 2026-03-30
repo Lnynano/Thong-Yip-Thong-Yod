@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 # │    4. CLEAR LOG button
 # │    5. Backtest tab
 # └─────────────────────────────────────────────────────────────────────────────
-DEV_MODE: bool = True   # ← change to False before deploying
+DEV_MODE: bool = False   # ← change to False before deploying
 
 _INTERVALS = {"REAL": 300, "TEST": 15}
 _current_mode: str = "REAL"
