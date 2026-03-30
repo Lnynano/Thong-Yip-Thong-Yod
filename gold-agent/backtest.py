@@ -1,69 +1,32 @@
 #!/usr/bin/env python3
 """
 backtest.py
-Replay historical OHLCV data day-by-day through the Claude gold agent.
+Replay historical OHLCV data candle-by-candle through the Claude gold agent.
 
 Usage:
     cd gold-agent
     python backtest.py
 
+Data source:
+    yfinance GC=F (Gold Futures) — real historical prices.
+    Default: 1-hour candles, last 60 days  (gives ~900 candles, ~60 trade sessions)
+    Falls back to daily candles (last 6 months) if 1h fetch fails.
+
 Notes:
-    - Starts from day 20 (minimum for Bollinger Bands to be valid)
+    - Starts from candle 20 (minimum for Bollinger Bands to be valid)
     - Uses a fixed USD/THB rate of 34.5 for consistent conversion
     - News uses mock headlines (not real historical news)
-    - Each day makes 1 Claude API call (~12 calls total for 31-row dataset)
+    - Each candle makes 1 Claude API call — use BACKTEST_MAX_CANDLES env var
+      to cap the run (default 50 candles) and keep API costs reasonable
 """
 
 import sys
 import os
-import io
 import pandas as pd
 from unittest.mock import patch
 
 # ── Path setup ───────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-# ── Embedded historical data ─────────────────────────────────────────────────
-CSV_DATA = """Date,Open,High,Low,Close,Volume
-2025-12-17,4012.30,4045.60,3998.20,4032.50,285123
-2025-12-18,4032.50,4060.10,4015.40,4055.20,292110
-2025-12-19,4055.20,4088.40,4030.10,4072.80,301223
-2025-12-20,4072.80,4095.00,4048.60,4060.30,295332
-2025-12-21,4060.30,4075.80,4022.40,4035.60,280998
-2025-12-22,4035.60,4062.90,4010.30,4050.20,288776
-2025-12-23,4050.20,4080.50,4038.60,4075.40,300112
-2025-12-24,4075.40,4102.30,4050.10,4090.70,310554
-2025-12-25,4090.70,4115.20,4072.80,4105.60,315667
-2025-12-26,4105.60,4130.40,4088.90,4122.30,320110
-2025-12-27,4122.30,4155.60,4100.20,4148.90,332441
-2025-12-28,4148.90,4170.80,4120.50,4155.10,338220
-2025-12-29,4155.10,4188.60,4135.20,4175.30,345998
-2025-12-30,4175.30,4205.90,4150.00,4190.80,350776
-2025-12-31,4190.80,4215.40,4170.60,4202.50,360112
-2026-01-01,4202.50,4228.70,4180.40,4215.90,365443
-2026-01-02,4215.90,4245.20,4195.10,4238.40,372110
-2026-01-03,4238.40,4268.90,4210.00,4255.70,380221
-2026-01-04,4255.70,4280.60,4232.40,4272.80,388990
-2026-01-05,4272.80,4305.40,4250.10,4295.60,395210
-2026-01-06,4295.60,4320.80,4275.30,4308.40,400554
-2026-01-07,4308.40,4345.90,4290.10,4335.20,410002
-2026-01-08,4335.20,4362.40,4310.60,4348.70,415334
-2026-01-09,4348.70,4380.50,4330.40,4372.10,420776
-2026-01-10,4372.10,4405.90,4350.20,4395.60,428990
-2026-01-11,4395.60,4425.80,4370.50,4412.40,435210
-2026-01-12,4412.40,4440.20,4390.60,4428.80,440554
-2026-01-13,4428.80,4465.70,4410.10,4455.30,450112
-2026-01-14,4455.30,4480.60,4430.40,4468.20,455667
-2026-01-15,4468.20,4495.80,4445.00,4482.90,460110
-2026-01-16,4482.90,4520.40,4460.30,4505.60,470554
-2026-01-17,4505.60,4540.80,4485.20,4528.70,480002
-2026-01-18,4528.70,4565.10,4510.40,4552.30,490334
-2026-01-19,4552.30,4588.90,4530.20,4575.80,500776
-2026-01-20,4575.80,4605.40,4550.60,4588.20,510998
-2026-01-21,4588.20,4615.90,4560.10,4595.40,505210
-2026-01-22,4595.40,4620.80,4570.30,4602.10,498554
-2026-01-23,4602.10,4635.20,4580.60,4625.70,490112
-"""
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 USD_THB_RATE        = 34.5      # fixed rate for consistent backtesting
@@ -75,6 +38,8 @@ CONFIDENCE_GATE     = 65
 MIN_BALANCE_THB     = 1000.0
 POSITION_SIZE_PCT   = 0.95
 MIN_ROWS            = 20        # need 20 rows for Bollinger Bands(20)
+# Cap candles to run so API costs stay predictable (override with env var)
+MAX_CANDLES         = int(os.environ.get("BACKTEST_MAX_CANDLES", "50"))
 
 
 def usd_to_thb_per_bw(price_usd: float) -> float:
@@ -97,15 +62,65 @@ def run_backtest() -> dict:
             "open_position" : dict or None if position still open at end,
         }
     """
-    # ── Load data ─────────────────────────────────────────────────────────────
-    df_full = pd.read_csv(io.StringIO(CSV_DATA), parse_dates=["Date"])
-    df_full = df_full.set_index("Date")
-    df_full.index.name = "Date"
+    # ── Load real historical data from yfinance ───────────────────────────────
+    import yfinance as yf
+
+    df_full = None
+    interval_used = ""
+
+    # Try 1-hour candles first (last 60 days — yfinance hard limit for 1h)
+    try:
+        print("  Fetching 1h candles from yfinance (GC=F, 60d)...")
+        raw = yf.download("GC=F", period="60d", interval="1h", progress=False, auto_adjust=True)
+        if not raw.empty and len(raw) >= MIN_ROWS + 5:
+            # yfinance returns MultiIndex columns when auto_adjust=True
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.get_level_values(0)
+            raw.index.name = "Date"
+            df_full = raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
+            interval_used = "1h"
+            print(f"  Got {len(df_full)} hourly candles.")
+    except Exception as e:
+        print(f"  1h fetch failed ({e}), falling back to daily...")
+
+    # Fallback: daily candles (last 6 months)
+    if df_full is None or len(df_full) < MIN_ROWS + 5:
+        try:
+            print("  Fetching daily candles from yfinance (GC=F, 6mo)...")
+            raw = yf.download("GC=F", period="6mo", interval="1d", progress=False, auto_adjust=True)
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.get_level_values(0)
+            raw.index.name = "Date"
+            df_full = raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
+            interval_used = "1d"
+            print(f"  Got {len(df_full)} daily candles.")
+        except Exception as e:
+            print(f"  Daily fetch also failed: {e}")
+            return {
+                "daily_log": [], "closed_trades": [], "open_position": None,
+                "summary": {"error": str(e)},
+            }
+
+    if df_full is None or df_full.empty:
+        print("  ERROR: Could not fetch any data from yfinance.")
+        return {
+            "daily_log": [], "closed_trades": [], "open_position": None,
+            "summary": {"error": "No data fetched"},
+        }
+
+    # ── Cap candles to keep API costs reasonable ──────────────────────────────
+    # Always take the LAST N candles so we replay the most recent market action
+    if len(df_full) > MIN_ROWS + MAX_CANDLES:
+        df_full = df_full.iloc[-(MIN_ROWS + MAX_CANDLES):]
+        print(f"  Capped to last {MIN_ROWS + MAX_CANDLES} candles "
+              f"({MIN_ROWS} warmup + {MAX_CANDLES} live).")
 
     print("=" * 65)
-    print("  GOLD AGENT BACKTEST")
-    print(f"  Data  : {df_full.index[0].date()} → {df_full.index[-1].date()}  ({len(df_full)} rows)")
-    print(f"  Start : day {MIN_ROWS} (Bollinger Bands require {MIN_ROWS} rows)")
+    print("  GOLD AGENT BACKTEST  (real yfinance data)")
+    print(f"  Interval : {interval_used}")
+    print(f"  Data  : {df_full.index[0]}  →  {df_full.index[-1]}")
+    print(f"  Candles  : {len(df_full)}  |  Live candles: {len(df_full) - MIN_ROWS}")
+    print(f"  Start : candle {MIN_ROWS} (Bollinger Bands require {MIN_ROWS} rows)")
     print(f"  Rate  : USD/THB = {USD_THB_RATE} (fixed)")
     print(f"  Capital: ฿{INITIAL_BALANCE_THB:,.0f}  |  Gate: {CONFIDENCE_GATE}% confidence")
     print("=" * 65)
@@ -126,7 +141,7 @@ def run_backtest() -> dict:
         price_thb  = usd_to_thb_per_bw(price_usd)
 
         print(f"\n{'─'*65}")
-        print(f"  Day {i+1:2d} | {date.date()} | ${price_usd:,.2f} | ฿{price_thb:,.0f}/bw")
+        print(f"  Candle {i+1:3d} | {date} | ${price_usd:,.2f} | ฿{price_thb:,.0f}/bw")
         print(f"{'─'*65}")
 
         with patch.object(fetch_module, "get_gold_price", return_value=window):
