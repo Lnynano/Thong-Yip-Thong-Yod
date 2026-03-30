@@ -6,7 +6,10 @@ Returns the last 90 days of OHLCV as a pandas DataFrame.
 
 import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+# Thai timezone UTC+7
+_THAI_TZ = timezone(timedelta(hours=7))
 
 # Stores the last successful fetch time for display in the UI
 _last_fetched_at: str = "Never"
@@ -46,7 +49,7 @@ def get_gold_price() -> pd.DataFrame:
         df.dropna(inplace=True)
 
         # Record timestamp of this successful fetch
-        _last_fetched_at = datetime.now().strftime("%H:%M:%S")
+        _last_fetched_at = datetime.now(_THAI_TZ).strftime("%H:%M:%S")
 
         print(f"[fetch.py] Fetched {len(df)} rows. "
               f"Latest close: {df['Close'].iloc[-1]:.2f} USD  (at {_last_fetched_at})")
