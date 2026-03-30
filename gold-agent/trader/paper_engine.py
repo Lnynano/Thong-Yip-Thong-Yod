@@ -30,6 +30,11 @@ DEFAULT_BALANCE = 1500.0
 MIN_TRADE_THB   = 1000.0
 CONF_THRESHOLD  = 65
 
+# ── Risk management constants ─────────────────────────────────
+TAKE_PROFIT_PCT = 0.015   # +1.5% → auto SELL (lock profit)
+STOP_LOSS_PCT   = -0.010  # -1.0% → auto SELL (cut loss)
+COOLDOWN_ROUNDS = 2       # rounds to skip after closing a trade
+
 # ─────────────────────────────────────────────────────────────
 # MongoDB client (lazy init — only when MONGODB_URI is set)
 # ─────────────────────────────────────────────────────────────
@@ -112,6 +117,7 @@ def _fresh_state(initial_balance: float = DEFAULT_BALANCE) -> dict:
         "equity_history":  [
             {"time": datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M"), "equity": initial_balance}
         ],
+        "cooldown":        0,   # rounds remaining before next BUY allowed
     }
 
 
@@ -153,11 +159,33 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
     if price_thb <= 0:
         return {"action": "SKIP", "reason": "Invalid price"}
 
+    now = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+    # ── Auto TP/SL check (overrides Claude decision) ─────────
+    pos = state["open_position"]
+    if pos is not None:
+        change_pct = (price_thb - pos["entry_price"]) / pos["entry_price"]
+        if change_pct >= TAKE_PROFIT_PCT:
+            decision   = "SELL"
+            confidence = 100
+            print(f"[paper_engine.py] TAKE PROFIT triggered at {change_pct*100:+.2f}%")
+        elif change_pct <= STOP_LOSS_PCT:
+            decision   = "SELL"
+            confidence = 100
+            print(f"[paper_engine.py] STOP LOSS triggered at {change_pct*100:+.2f}%")
+
+    # ── Confidence gate (skip TP/SL override) ────────────────
     if confidence < CONF_THRESHOLD:
         return {"action": "SKIP",
                 "reason": f"Confidence {confidence}% < {CONF_THRESHOLD}% threshold"}
 
-    now = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    # ── Cooldown check ────────────────────────────────────────
+    cooldown = state.get("cooldown", 0)
+    if cooldown > 0 and decision == "BUY":
+        state["cooldown"] = cooldown - 1
+        _save(state)
+        return {"action": "SKIP",
+                "reason": f"Cooldown active — {cooldown} round(s) remaining"}
 
     # ── Open long ────────────────────────────────────────────
     if decision == "BUY" and state["open_position"] is None:
@@ -168,19 +196,23 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
 
         cost    = available * 0.95
         size_bw = cost / price_thb
-        state["balance"] -= cost
-        state["open_position"] = {
+        state["balance"]       -= cost
+        state["open_position"]  = {
             "direction":   "BUY",
             "entry_price": price_thb,
             "size_bw":     round(size_bw, 6),
             "cost_thb":    round(cost, 2),
             "entry_time":  now,
         }
+        state["cooldown"] = 0
         _record_equity(state, price_thb)
         _save(state)
-        print(f"[paper_engine.py] OPENED  {size_bw:.5f} bw @ {price_thb:,.0f} THB")
+        print(f"[paper_engine.py] OPENED  {size_bw:.5f} bw @ {price_thb:,.0f} THB  "
+              f"TP={price_thb*(1+TAKE_PROFIT_PCT):,.0f}  SL={price_thb*(1+STOP_LOSS_PCT):,.0f}")
         return {"action": "OPENED", "size_bw": size_bw,
-                "price_thb": price_thb, "cost_thb": cost}
+                "price_thb": price_thb, "cost_thb": cost,
+                "tp_price": round(price_thb * (1 + TAKE_PROFIT_PCT), 0),
+                "sl_price": round(price_thb * (1 + STOP_LOSS_PCT), 0)}
 
     # ── Close long ───────────────────────────────────────────
     if decision == "SELL" and state["open_position"] is not None:
@@ -203,15 +235,22 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
         }
         state["closed_trades"].append(trade)
         state["open_position"] = None
+        state["cooldown"]      = COOLDOWN_ROUNDS   # start cooldown after close
         _record_equity(state, price_thb)
         _save(state)
         print(f"[paper_engine.py] CLOSED  {trade['outcome']}  "
-              f"P&L {pnl:+.2f} THB ({pnl_pct:+.2f}%)")
+              f"P&L {pnl:+.2f} THB ({pnl_pct:+.2f}%)  "
+              f"cooldown={COOLDOWN_ROUNDS} rounds")
         return {"action": "CLOSED", "pnl_thb": pnl,
                 "pnl_pct": pnl_pct, "outcome": trade["outcome"], "trade": trade}
 
     if decision == "BUY" and state["open_position"] is not None:
         return {"action": "SKIP", "reason": "Already holding a position"}
+
+    # Tick down cooldown on HOLD too
+    if cooldown > 0:
+        state["cooldown"] = cooldown - 1
+        _save(state)
 
     return {"action": "HOLD", "reason": "Signal is HOLD or no matching position"}
 
