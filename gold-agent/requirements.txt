@@ -8,3 +8,5 @@ python-dotenv
 requests
 lightrag-hku
 sentence-transformers
+pymongo
+dnspython
