@@ -172,7 +172,16 @@ def get_sentiment_summary(headlines: list[str]) -> str:
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
-        data = json.loads(response.content[0].text)
+        raw = response.content[0].text.strip() if response.content else ""
+        if not raw:
+            print("[sentiment.py] Empty response from Claude — falling back to keywords.")
+            result = _keyword_sentiment(headlines)
+            _sentiment_cache.update({"key": cache_key, "value": result, "ts": now})
+            return result
+        # Extract JSON even if Claude wraps it in markdown code fences
+        start = raw.find("{")
+        end   = raw.rfind("}") + 1
+        data = json.loads(raw[start:end] if start != -1 else raw)
         label = data.get("sentiment", "").upper()
         if label in ("BULLISH", "BEARISH", "NEUTRAL"):
             print(f"[sentiment.py] Claude sentiment: {label}")

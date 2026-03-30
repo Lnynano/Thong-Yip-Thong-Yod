@@ -53,6 +53,9 @@ def _get_st_model():
     return _st_model
 
 
+import asyncio
+
+
 async def _llm_func(prompt, system_prompt=None, history_messages=None, **kwargs) -> str:
     # history_messages is provided by LightRAG for multi-turn extraction but not forwarded
     client = _get_anthropic_client()
@@ -91,6 +94,15 @@ def _get_rag():
         ),
     )
 
+    # Newer lightrag-hku versions require explicit async storage initialisation.
+    # This runs inside the single-threaded executor (no running event loop),
+    # so asyncio.run() is safe here.
+    try:
+        asyncio.run(_rag.initialize_storages())
+        print("[lightrag_store.py] Storages initialised.")
+    except Exception as e:
+        print(f"[lightrag_store.py] Storage init warning (may be ok on older versions): {e}")
+
     if not os.path.exists(SEED_SENTINEL):
         _seed(_rag)
 
@@ -103,7 +115,11 @@ def _seed(rag) -> None:
         with open(SEED_FILE, "r", encoding="utf-8") as f:
             content = f.read().strip()
         if content:
-            rag.insert(content)
+            # Use async insert for newer lightrag API; fall back to sync.
+            try:
+                asyncio.run(rag.ainsert(content))
+            except AttributeError:
+                rag.insert(content)
             with open(SEED_SENTINEL, "w", encoding="utf-8") as f:
                 f.write(datetime.now().isoformat())
             print("[lightrag_store.py] Knowledge base seeded with gold market domain knowledge.")
@@ -118,13 +134,21 @@ def _insert_in_thread(headlines: list[str]) -> None:
         f"[{timestamp}] Gold market news headlines:\n"
         + "\n".join(f"- {h}" for h in headlines)
     )
-    rag.insert(text)
+    # Use async insert for newer lightrag API; fall back to sync.
+    try:
+        asyncio.run(rag.ainsert(text))
+    except AttributeError:
+        rag.insert(text)
 
 
 def _query_in_thread(question: str) -> str:
     from lightrag import QueryParam
     rag = _get_rag()
-    result = rag.query(question, param=QueryParam(mode="hybrid"))
+    # Use async query for newer lightrag API; fall back to sync.
+    try:
+        result = asyncio.run(rag.aquery(question, param=QueryParam(mode="hybrid")))
+    except AttributeError:
+        result = rag.query(question, param=QueryParam(mode="hybrid"))
     return result or ""
 
 
