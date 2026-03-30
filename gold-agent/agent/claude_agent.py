@@ -480,7 +480,7 @@ def run_agent() -> dict:
             # temperature=0 and top_p=0.1 for consistent JSON
             response = client.messages.create(
                 model="claude-sonnet-4-20250514",
-                max_tokens=4096,
+                max_tokens=1024,        # 1024 is ample for JSON decision (~300-500 tokens actual)
                 temperature=0,          # τ→0: near-deterministic
                 top_p=0.1,              # Nucleus p=0.1: limit to high-prob tokens
                 system=SYSTEM_PROMPT,

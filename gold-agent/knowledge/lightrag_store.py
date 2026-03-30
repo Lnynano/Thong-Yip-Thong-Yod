@@ -18,6 +18,7 @@ Storage: data/lightrag/ (persisted alongside portfolio.json)
 """
 
 import concurrent.futures
+import hashlib
 import os
 from datetime import datetime
 
@@ -30,6 +31,10 @@ _st_model         = None
 _anthropic_client = None
 # Single-threaded executor: all LightRAG ops run here, never in Gradio's loop
 _executor         = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="lightrag")
+
+# ── Dedup guard: skip insert if exact same headlines were inserted before ──
+# Saves ~5-10 Haiku calls per duplicate insert (LightRAG entity extraction)
+_last_inserted_hash: str | None = None
 
 
 def _get_anthropic_client():
@@ -127,17 +132,29 @@ def insert_headlines(headlines: list[str]) -> None:
     """
     Append news headlines to the knowledge graph.
 
+    Skips insert if the exact same headlines were already inserted this session
+    (dedup by MD5 hash) — saves 5-10 Haiku API calls per skipped insert.
+
     Runs in a background thread to avoid conflicts with Gradio's event loop.
     Silent on any failure.
 
     Args:
         headlines: List of headline strings from get_gold_news().
     """
+    global _last_inserted_hash
     if not headlines:
         return
+
+    # Hash check — skip if identical to last insert
+    current_hash = hashlib.md5("|".join(headlines).encode()).hexdigest()
+    if current_hash == _last_inserted_hash:
+        print("[lightrag_store.py] Headlines unchanged → skipping insert (saved Haiku calls)")
+        return
+
     try:
         future = _executor.submit(_insert_in_thread, headlines)
         future.result(timeout=60)
+        _last_inserted_hash = current_hash
     except Exception as e:
         print(f"[lightrag_store.py] Insert failed: {e}")
 
