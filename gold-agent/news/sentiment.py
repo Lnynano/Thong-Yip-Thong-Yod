@@ -11,12 +11,19 @@ Falls back to keyword counting if the API call fails.
 import json
 import os
 import random
+import hashlib
+import time
 
 import anthropic
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── Sentiment cache — avoid duplicate API calls within same refresh cycle ──
+# If the same headlines are seen again within 10 minutes, return cached result.
+_sentiment_cache: dict = {"key": None, "value": None, "ts": 0.0}
+_CACHE_TTL = 600  # 10 minutes
 
 # Large pool of realistic mock headlines — 5 are randomly picked each refresh
 # so users never see the same set twice when no API key is configured.
@@ -139,6 +146,14 @@ def get_sentiment_summary(headlines: list[str]) -> str:
     Returns:
         str: "BULLISH", "BEARISH", or "NEUTRAL".
     """
+    # ── Cache check: same headlines within TTL → skip API call ──────────────
+    cache_key = hashlib.md5("|".join(headlines).encode()).hexdigest()
+    now = time.time()
+    if (_sentiment_cache["key"] == cache_key and
+            now - _sentiment_cache["ts"] < _CACHE_TTL):
+        print(f"[sentiment.py] Cache hit → {_sentiment_cache['value']} (saved 1 Haiku call)")
+        return _sentiment_cache["value"]
+
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return _keyword_sentiment(headlines)
@@ -161,8 +176,11 @@ def get_sentiment_summary(headlines: list[str]) -> str:
         label = data.get("sentiment", "").upper()
         if label in ("BULLISH", "BEARISH", "NEUTRAL"):
             print(f"[sentiment.py] Claude sentiment: {label}")
+            _sentiment_cache.update({"key": cache_key, "value": label, "ts": now})
             return label
-        return _keyword_sentiment(headlines)
+        result = _keyword_sentiment(headlines)
+        _sentiment_cache.update({"key": cache_key, "value": result, "ts": now})
+        return result
 
     except Exception as e:
         print(f"[sentiment.py] Claude sentiment failed ({e}). Falling back to keywords.")
