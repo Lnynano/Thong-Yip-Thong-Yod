@@ -70,7 +70,7 @@ def _tick_countdown() -> str:
     filled    = min(filled, 20)
     bar       = "#" * filled + "-" * (20 - filled)   # ASCII-safe, renders in any font
     label     = "TEST 15s" if _current_mode == "TEST" else "REAL 5min"
-    return f"[{label}]  Next refresh in  {mins}:{secs:02d}  [{bar}]"
+    return f"Next refresh in  {mins}:{secs:02d}  [{bar}]"
 
 # ─────────────────────────────────────────────────────────────
 # Dark PNS-style CSS
@@ -1097,7 +1097,7 @@ def build_ui() -> gr.Blocks:
                     background:#0f0f0f; border-bottom:1px solid #1e1e1e;
                     display:flex; justify-content:space-between; align-items:center;">
           <span style="color:#888; font-size:1.1em; font-weight:700;
-                       letter-spacing:0.2em;">🥇 Thong Yip Thong Yod</span>
+                       letter-spacing:0.2em;"> Thong Yip Thong Yod</span>
           <span style="color:#555; font-size:0.75em; letter-spacing:0.1em;">
             XAUUSD &nbsp;·&nbsp; PAPER TRADING &nbsp;·&nbsp;
             <span style="color:#c9f002;">● LIVE</span>
