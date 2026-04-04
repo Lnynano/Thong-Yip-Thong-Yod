@@ -1,0 +1,70 @@
+Gold Market Domain Knowledge — Static Seed for LightRAG Knowledge Base
+
+## Gold Price Drivers
+
+### USD/DXY Inverse Correlation
+Gold prices move inversely to the US Dollar Index (DXY). When the dollar strengthens, gold becomes more expensive in other currencies, reducing demand and pushing prices down. When the dollar weakens, gold becomes cheaper globally, increasing demand and prices. This is the single strongest correlation in gold trading.
+
+### Federal Reserve Interest Rates
+Rising interest rates are bearish for gold because:
+1. Higher rates increase the opportunity cost of holding gold (gold pays no yield)
+2. Rate hikes signal economic strength, reducing safe-haven demand
+3. Higher rates typically strengthen the USD, applying double downward pressure
+
+Rate cuts are bullish for gold: lower rates reduce opportunity cost, may weaken USD, and signal economic concern.
+
+### Safe-Haven Demand
+Gold is the world's premier safe-haven asset. Demand surges during:
+- Geopolitical conflicts and wars (Middle East, Russia-Ukraine, Taiwan Strait tensions)
+- Banking crises or financial system stress
+- Recession fears and equity market crashes
+- Sovereign debt concerns or currency crises
+
+### Inflation Hedge
+Gold is a long-term inflation hedge. When CPI data surprises to the upside or inflation expectations rise, gold benefits as investors seek real assets. However, this effect can be offset by the Fed's response (rate hikes).
+
+### Central Bank Buying
+Central banks, especially from China, India, Russia, Turkey, and BRICS nations, have been net buyers of gold since 2022. Large purchase announcements from central banks are bullish catalysts. De-dollarization strategies among emerging market central banks support long-term gold demand.
+
+### Gold ETF Flows
+Rising ETF inflows (especially SPDR Gold Shares / GLD) signal institutional bullish positioning. Large outflows indicate institutional selling and are bearish. ETF inventory data is published daily.
+
+## Thai Gold Market Specifics
+
+### Baht-Weight (บาท)
+Thai gold is priced per baht-weight (บาทหนึ่ง). One baht-weight = 15.244 grams. Thai retail gold uses 96.5% purity (not the international 99.99% standard). The Thai gold shop price is calculated as: (spot price USD/oz) × (USD/THB rate) / 31.1035 × 15.244 × 0.965.
+
+### Thai Gold Shop Dynamics
+Major Thai gold shop chains (Gold Now / Hua Seng Heng / Aurora) update prices approximately every 30 minutes during trading hours. Buy/sell spreads are typically 150-200 THB per baht-weight.
+
+## Technical Analysis Context
+
+### RSI (Relative Strength Index) — Wilder Smoothing
+- RSI > 70: Overbought — potential reversal or correction
+- RSI 40-65: Neutral zone — trend continuation or consolidation
+- RSI < 30: Oversold — potential bounce or reversal
+Wilder smoothing (used here) produces smoother RSI than simple EMA and is the industry standard.
+
+### MACD Signal
+- Positive histogram (MACD above signal line): Bullish momentum
+- Negative histogram (MACD below signal line): Bearish momentum
+- Histogram shrinking toward zero: Momentum weakening, possible reversal
+
+### Bollinger Bands
+- %B > 1.0: Price above upper band — overbought
+- %B < 0.0: Price below lower band — oversold
+- Bandwidth expansion: Volatility increasing, potential breakout
+- Bandwidth contraction: Low volatility, potential breakout approaching
+
+## Historical Patterns
+
+### Gold Seasonality
+Gold historically shows strength in Q1 (January-March) due to Asian New Year demand, and in Q3-Q4 due to Indian festival/wedding season (Diwali, Dhanteras).
+
+### Correlation with Equities
+Gold typically has a negative correlation with equities during risk-off events (investors flee to gold). During prolonged bull markets, the correlation can be positive as liquidity flows into all assets.
+
+### Key Support/Resistance Levels (as of 2024-2025)
+- Major psychological level: $2,000/oz (long-term support)
+- Record highs area: $2,500-$2,800/oz (resistance)
+- Strong bull market drivers: geopolitical tension + Fed easing cycle

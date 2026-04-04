@@ -1,0 +1,12 @@
+anthropic
+gradio>=4.15.0
+yfinance
+pandas
+numpy
+matplotlib
+python-dotenv
+requests
+lightrag-hku
+sentence-transformers
+pymongo
+dnspython
