@@ -98,13 +98,13 @@ def _is_cache_valid(cache: dict) -> bool:
 # ─────────────────────────────────────────────────────────────
 def _run_analysis() -> dict:
     """Call Claude Haiku to analyze macro gold trend for today."""
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         print("[daily_market_agent.py] No API key — skipping analysis.")
         return _DEFAULT
 
     try:
-        import anthropic
+        from openai import OpenAI
         from data.fetch import get_gold_price
         from news.sentiment import get_gold_news
 
@@ -135,14 +135,14 @@ Return JSON only, no other text:
   "daily_summary":  "<2 sentences: current market state and key driver>"
 }}"""
 
-        client   = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model      = "claude-haiku-4-5-20251001",
+        client   = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model      = "gpt-4o-mini",
             max_tokens = 256,
             temperature= 0,
             messages   = [{"role": "user", "content": prompt}],
         )
-        text   = response.content[0].text.strip()
+        text   = response.choices[0].message.content.strip()
         start  = text.find("{")
         end    = text.rfind("}") + 1
         result = json.loads(text[start:end])

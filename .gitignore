@@ -226,3 +226,12 @@ gold-agent/data/lightrag/
 .env
 .env.*
 !.env.example
+
+# ── Python virtual environment ─────────────────────────────────────────────────
+.venv/
+venv/
+gold-agent/.venv/
+
+# ── OS files ───────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
