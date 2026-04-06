@@ -31,7 +31,7 @@ SEED_SENTINEL = os.path.join(WORKING_DIR, ".seeded")
 
 _rag              = None
 _st_model         = None
-_anthropic_client = None
+_openai_client    = None
 # Single-threaded executor: all LightRAG ops run here, never in Gradio's loop
 _executor         = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="lightrag")
 
@@ -58,12 +58,12 @@ def _run_async(coro):
     return _loop.run_until_complete(coro)
 
 
-def _get_anthropic_client():
-    global _anthropic_client
-    if _anthropic_client is None:
-        import anthropic
-        _anthropic_client = anthropic.Anthropic()
-    return _anthropic_client
+def _get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        from openai import OpenAI
+        _openai_client = OpenAI()
+    return _openai_client
 
 
 def _get_st_model():
@@ -75,16 +75,19 @@ def _get_st_model():
 
 
 async def _llm_func(prompt, system_prompt=None, history_messages=None, **kwargs) -> str:
-    """Sync Anthropic call wrapped as async for LightRAG compatibility."""
-    client = _get_anthropic_client()
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+    """Sync OpenAI call wrapped as async for LightRAG compatibility."""
+    client = _get_openai_client()
+    messages = [
+        {"role": "system", "content": system_prompt or "You are a helpful knowledge extraction assistant."},
+        {"role": "user", "content": prompt},
+    ]
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
         max_tokens=512,
         temperature=0,
-        system=system_prompt or "You are a helpful knowledge extraction assistant.",
-        messages=[{"role": "user", "content": prompt}],
+        messages=messages,
     )
-    return response.content[0].text
+    return response.choices[0].message.content
 
 
 async def _embed_func(texts: list[str]) -> np.ndarray:

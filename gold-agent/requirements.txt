@@ -1,4 +1,4 @@
-anthropic
+openai
 gradio>=4.15.0
 yfinance
 pandas

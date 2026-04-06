@@ -954,16 +954,21 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         confidence = agent.get("confidence", 0)
         reasoning  = agent.get("reasoning", "No reasoning.")
 
-        api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
         if not api_key or api_key == "your_key_here":
-            reasoning = ("ANTHROPIC_API_KEY not set.\n"
-                         "Add it to your .env file to enable Claude analysis.")
+            reasoning = ("OPENAI_API_KEY not set.\n"
+                         "Add it to your .env file to enable GPT analysis.")
 
-        # 7. Paper trade execution — ONLY when trade_mode is ON
+        # 7. Paper trade execution — ONLY when trade_mode is ON AND scheduler allows
         from trader.paper_engine import execute_paper_trade, get_portfolio_summary, \
                                         get_trade_history, get_equity_history, get_recent_outcomes
-        if trade_mode:
+        from trader.trade_scheduler import can_trade_now, record_trade
+        if trade_mode and can_trade_now():
             trade_result = execute_paper_trade(decision, confidence, thb_now)
+            if trade_result.get("action") not in ("DISABLED", "SKIP", None):
+                record_trade()
+        elif trade_mode and not can_trade_now():
+            trade_result = {"action": "SKIP", "reason": "Outside trading window"}
         else:
             trade_result = {"action": "DISABLED", "reason": "Trade mode is OFF"}
 
@@ -1283,7 +1288,7 @@ def build_ui() -> gr.Blocks:
             return list(run_full_analysis(trade_mode))
 
         try:
-            real_timer = gr.Timer(value=300)
+            real_timer = gr.Timer(value=1800)  # 30 minutes
             real_timer.tick(fn=_run_if_real, inputs=[trade_mode_toggle], outputs=outputs)
 
             test_timer = gr.Timer(value=15)

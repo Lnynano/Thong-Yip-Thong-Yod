@@ -14,7 +14,7 @@ import random
 import hashlib
 import time
 
-import anthropic
+from openai import OpenAI
 import requests
 from dotenv import load_dotenv
 
@@ -154,27 +154,27 @@ def get_sentiment_summary(headlines: list[str]) -> str:
         print(f"[sentiment.py] Cache hit → {_sentiment_cache['value']} (saved 1 Haiku call)")
         return _sentiment_cache["value"]
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return _keyword_sentiment(headlines)
 
     try:
-        client = anthropic.Anthropic()
+        client = OpenAI(api_key=api_key)
         headlines_text = "\n".join(f"- {h}" for h in headlines)
         prompt = (
             f"Analyze these gold market news headlines:\n{headlines_text}\n\n"
             "Return JSON only, no other text: "
             '{"sentiment": "BULLISH" or "BEARISH" or "NEUTRAL", "reasoning": "<1 sentence>"}'
         )
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
             max_tokens=100,
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = response.content[0].text.strip() if response.content else ""
+        raw = response.choices[0].message.content.strip() if response.choices else ""
         if not raw:
-            print("[sentiment.py] Empty response from Claude — falling back to keywords.")
+            print("[sentiment.py] Empty response from GPT — falling back to keywords.")
             result = _keyword_sentiment(headlines)
             _sentiment_cache.update({"key": cache_key, "value": result, "ts": now})
             return result

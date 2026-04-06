@@ -17,7 +17,7 @@ Model: claude-sonnet-4-20250514
 
 import os
 import json
-import anthropic
+from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -77,56 +77,65 @@ After calling all tools, respond with ONLY this JSON (no other text):
 # ─────────────────────────────────────────────────────────────
 TOOLS = [
     {
-        "name": "get_price",
-        "description": (
-            "Retrieves the current XAUUSD (gold futures) price in USD per troy ounce "
-            "and a recent OHLCV summary table. Call this FIRST to establish market context. "
-            "Returns structured markdown-style data."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "period": {
-                    "type": "string",
-                    "description": "Summary period: '5d' (default), '10d', or '30d'",
-                    "enum": ["5d", "10d", "30d"],
-                }
+        "type": "function",
+        "function": {
+            "name": "get_price",
+            "description": (
+                "Retrieves the current XAUUSD (gold futures) price in USD per troy ounce "
+                "and a recent OHLCV summary table. Call this FIRST to establish market context. "
+                "Returns structured markdown-style data."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period": {
+                        "type": "string",
+                        "description": "Summary period: '5d' (default), '10d', or '30d'",
+                        "enum": ["5d", "10d", "30d"],
+                    }
+                },
+                "required": [],
             },
-            "required": [],
         },
     },
     {
-        "name": "get_indicators",
-        "description": (
-            "Returns pre-computed technical indicators (RSI, MACD, Bollinger Bands). "
-            "All values are deterministically calculated from 90 days of price data. "
-            "NEVER re-calculate these yourself — use these values as authoritative. "
-            "RSI > 70 = overbought, RSI < 30 = oversold. "
-            "Positive MACD histogram = bullish momentum."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": [],
+        "type": "function",
+        "function": {
+            "name": "get_indicators",
+            "description": (
+                "Returns pre-computed technical indicators (RSI, MACD, Bollinger Bands). "
+                "All values are deterministically calculated from 90 days of price data. "
+                "NEVER re-calculate these yourself — use these values as authoritative. "
+                "RSI > 70 = overbought, RSI < 30 = oversold. "
+                "Positive MACD histogram = bullish momentum."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
         },
     },
     {
-        "name": "get_news",
-        "description": (
-            "Fetches the 5 most recent gold market news headlines with overall sentiment. "
-            "THIS IS YOUR SUPERPOWER: combine this news with mathematical "
-            "indicators. A single macro event (Fed rate cut, war escalation) can override "
-            "all technical signals. Always check news before deciding."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "count": {
-                    "type": "integer",
-                    "description": "Number of headlines to retrieve (1-5, default 5)",
-                }
+        "type": "function",
+        "function": {
+            "name": "get_news",
+            "description": (
+                "Fetches the 5 most recent gold market news headlines with overall sentiment. "
+                "THIS IS YOUR SUPERPOWER: combine this news with mathematical "
+                "indicators. A single macro event (Fed rate cut, war escalation) can override "
+                "all technical signals. Always check news before deciding."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of headlines to retrieve (1-5, default 5)",
+                    }
+                },
+                "required": [],
             },
-            "required": [],
         },
     },
 ]
@@ -484,21 +493,21 @@ def run_agent() -> dict:
         "agent_trace" : [],
     }
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key or api_key == "your_key_here":
-        print("[claude_agent.py] No ANTHROPIC_API_KEY found.")
-        default_result["reasoning"] = "ANTHROPIC_API_KEY not configured. Set it in your .env file."
+        print("[claude_agent.py] No OPENAI_API_KEY found.")
+        default_result["reasoning"] = "OPENAI_API_KEY not configured. Set it in your .env file."
         return default_result
 
     # ReAct trajectory log
     agent_trace = []
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
+        client = OpenAI(api_key=api_key)
 
-        # Initial user message with structured state
-        # (Progressive disclosure: global view first, then targeted detail via tools)
+        # Initial messages with system prompt + user task
         messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": (
@@ -512,7 +521,7 @@ def run_agent() -> dict:
                     "macro events usually dominate for Gold.\n\n"
                     "Respond ONLY with the JSON object specified in your system prompt."
                 ),
-            }
+            },
         ]
 
         print("[claude_agent.py] Starting ReAct agent loop...")
@@ -526,26 +535,24 @@ def run_agent() -> dict:
             iteration += 1
             print(f"[claude_agent.py] Iteration {iteration}/{max_iterations}")
 
-            # temperature=0 and top_p=0.1 for consistent JSON
-            response = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=1024,        # 1024 is ample for JSON decision (~300-500 tokens actual)
-                temperature=0,          # τ→0: near-deterministic
-                top_p=0.1,              # Nucleus p=0.1: limit to high-prob tokens
-                system=SYSTEM_PROMPT,
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                max_tokens=1024,
+                temperature=0,
                 tools=TOOLS,
+                tool_choice="auto",
                 messages=messages,
             )
 
+            msg = response.choices[0].message
+            finish_reason = response.choices[0].finish_reason
+
             # Add assistant response to message history
-            messages.append({"role": "assistant", "content": response.content})
+            messages.append(msg)
 
             # ── End turn: extract final decision ────────────────────────────
-            if response.stop_reason == "end_turn":
-                final_text = ""
-                for block in response.content:
-                    if hasattr(block, "text"):
-                        final_text += block.text
+            if finish_reason == "stop":
+                final_text = msg.content or ""
 
                 print("[claude_agent.py] Agent finished. Parsing response...")
                 agent_trace.append("[AGENT DECIDED] Final JSON response received")
@@ -565,57 +572,40 @@ def run_agent() -> dict:
                 return validated
 
             # ── Tool use: execute and feed back ──────────────
-            elif response.stop_reason == "tool_use":
-                tool_results = []
+            elif finish_reason == "tool_calls":
+                for tool_call in msg.tool_calls:
+                    tool_name  = tool_call.function.name
+                    tool_input = json.loads(tool_call.function.arguments)
+                    tool_id    = tool_call.id
 
-                for block in response.content:
-                    if block.type == "tool_use":
-                        tool_name  = block.name
-                        tool_input = block.input
-                        tool_id    = block.id
+                    print(f"[claude_agent.py] TOOL CALL: {tool_name} | input={tool_input}")
 
-                        print(f"[claude_agent.py] TOOL CALL: {tool_name} | input={tool_input}")
+                    # ReAct: aₖ → environment → oₖ
+                    result = _execute_tool(tool_name, tool_input)
+                    result_preview = result[:150] + "..." if len(result) > 150 else result
+                    print(f"[claude_agent.py] OBSERVATION: {result_preview}")
 
-                        # ReAct: aₖ → environment → oₖ
-                        result = _execute_tool(tool_name, tool_input)
-                        result_preview = result[:150] + "..." if len(result) > 150 else result
-                        print(f"[claude_agent.py] OBSERVATION: {result_preview}")
+                    # Log to ReAct trace
+                    agent_trace.append(
+                        f"[ACTION] Tool={tool_name} | "
+                        f"[OBSERVATION] {result_preview}"
+                    )
 
-                        # Log to ReAct trace
-                        agent_trace.append(
-                            f"[ACTION] Tool={tool_name} | "
-                            f"[OBSERVATION] {result_preview}"
-                        )
-
-                        tool_results.append({
-                            "type"       : "tool_result",
-                            "tool_use_id": tool_id,
-                            "content"    : result,
-                        })
-
-                # Feed observations back into context (oₖ → cₖ₊₁)
-                messages.append({"role": "user", "content": tool_results})
+                    # Feed tool result back into context
+                    messages.append({
+                        "role"        : "tool",
+                        "tool_call_id": tool_id,
+                        "content"     : result,
+                    })
 
             else:
-                print(f"[claude_agent.py] Unexpected stop_reason: {response.stop_reason}")
-                agent_trace.append(f"[WARNING] Unexpected stop: {response.stop_reason}")
+                print(f"[claude_agent.py] Unexpected finish_reason: {finish_reason}")
+                agent_trace.append(f"[WARNING] Unexpected stop: {finish_reason}")
                 break
 
         # ── Max iterations hit (infinite loop guard) ──────────────
         print("[claude_agent.py] Max iterations reached without final answer.")
         agent_trace.append("[FALLBACK] Max iterations reached → HOLD")
-        default_result["agent_trace"] = agent_trace
-        return default_result
-
-    except anthropic.AuthenticationError:
-        print("[claude_agent.py] Invalid ANTHROPIC_API_KEY.")
-        default_result["reasoning"] = "Invalid API key — check your ANTHROPIC_API_KEY in .env."
-        default_result["agent_trace"] = agent_trace
-        return default_result
-
-    except anthropic.RateLimitError:
-        print("[claude_agent.py] Rate limit exceeded.")
-        default_result["reasoning"] = "API rate limit exceeded — please wait and retry."
         default_result["agent_trace"] = agent_trace
         return default_result
 

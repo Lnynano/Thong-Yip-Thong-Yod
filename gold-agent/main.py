@@ -48,12 +48,12 @@ def verify_environment() -> bool:
     print("  Gold Trading Agent — Environment Check")
     print("=" * 60)
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key or api_key == "your_key_here":
-        print("  ❌ ANTHROPIC_API_KEY: Not set (agent will return default HOLD)")
+        print("  ❌ OPENAI_API_KEY: Not set (agent will return default HOLD)")
     else:
         masked = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "***"
-        print(f"  ✅ ANTHROPIC_API_KEY: {masked}")
+        print(f"  ✅ OPENAI_API_KEY: {masked}")
 
     news_key = os.getenv("NEWS_API_KEY", "")
     if not news_key or news_key == "your_key_here":
