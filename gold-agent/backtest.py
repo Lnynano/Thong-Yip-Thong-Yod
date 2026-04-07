@@ -40,6 +40,9 @@ POSITION_SIZE_PCT   = 0.95
 MIN_ROWS            = 20        # need 20 rows for Bollinger Bands(20)
 # Cap candles to run so API costs stay predictable (override with env var)
 MAX_CANDLES         = int(os.environ.get("BACKTEST_MAX_CANDLES", "50"))
+# Trading fees — mirrors paper_engine.py (loaded from env)
+TRADE_FEE_PCT       = float(os.environ.get("TRADE_FEE_PCT", "0.005"))
+TRADE_FEE_FLAT_THB  = float(os.environ.get("TRADE_FEE_FLAT_THB", "0"))
 
 
 def usd_to_thb_per_bw(price_usd: float) -> float:
@@ -48,6 +51,11 @@ def usd_to_thb_per_bw(price_usd: float) -> float:
     thb_per_gram  = thb_per_oz / TROY_OZ_GRAMS
     thb_per_bw    = thb_per_gram * BAHT_WEIGHT_GRAMS * PURITY
     return round(thb_per_bw, 2)
+
+
+def _calc_fee(trade_value_thb: float) -> float:
+    """Calculate total fee for a single transaction."""
+    return round(trade_value_thb * TRADE_FEE_PCT + TRADE_FEE_FLAT_THB, 2)
 
 
 def run_backtest() -> dict:
@@ -123,6 +131,7 @@ def run_backtest() -> dict:
     print(f"  Start : candle {MIN_ROWS} (Bollinger Bands require {MIN_ROWS} rows)")
     print(f"  Rate  : USD/THB = {USD_THB_RATE} (fixed)")
     print(f"  Capital: ฿{INITIAL_BALANCE_THB:,.0f}  |  Gate: {CONFIDENCE_GATE}% confidence")
+    print(f"  Fees  : {TRADE_FEE_PCT*100:.2f}% per trade + ฿{TRADE_FEE_FLAT_THB:.0f} flat")
     print("=" * 65)
 
     # ── Paper trading state (in-memory, no portfolio.json touched) ────────────
@@ -163,17 +172,20 @@ def run_backtest() -> dict:
         if decision == "BUY" and confidence >= CONFIDENCE_GATE:
             if open_position is None:
                 if balance_thb >= MIN_BALANCE_THB:
-                    cost    = round(balance_thb * POSITION_SIZE_PCT, 2)
-                    size_bw = cost / price_thb
+                    gross    = round(balance_thb * POSITION_SIZE_PCT, 2)
+                    open_fee = _calc_fee(gross)
+                    cost     = round(gross + open_fee, 2)   # total deducted
+                    size_bw  = gross / price_thb
                     balance_thb   -= cost
                     open_position  = {
                         "entry_date"  : str(date.date()),
                         "entry_price" : price_thb,
                         "size_bw"     : size_bw,
-                        "cost_thb"    : cost,
+                        "cost_thb"    : gross,   # gross cost (fee is overhead)
+                        "open_fee"    : open_fee,
                     }
                     action = "OPENED"
-                    print(f"  >> BUY executed  | cost ฿{cost:,.2f} | size {size_bw:.6f} bw")
+                    print(f"  >> BUY executed  | gross ฿{gross:,.2f} | fee ฿{open_fee:.2f} | size {size_bw:.6f} bw")
                 else:
                     action = "SKIP (low balance)"
             else:
@@ -181,10 +193,14 @@ def run_backtest() -> dict:
 
         elif decision == "SELL" and confidence >= CONFIDENCE_GATE:
             if open_position is not None:
-                proceeds = open_position["size_bw"] * price_thb
-                pnl_thb  = round(proceeds - open_position["cost_thb"], 2)
-                outcome  = "WIN" if pnl_thb >= 0 else "LOSS"
-                balance_thb += proceeds
+                gross_proceeds = open_position["size_bw"] * price_thb
+                close_fee      = _calc_fee(gross_proceeds)
+                open_fee       = open_position.get("open_fee", 0.0)
+                net_proceeds   = round(gross_proceeds - close_fee, 2)
+                total_fees     = round(open_fee + close_fee, 2)
+                pnl_thb        = round(net_proceeds - open_position["cost_thb"], 2)
+                outcome        = "WIN" if pnl_thb >= 0 else "LOSS"
+                balance_thb   += net_proceeds
                 trade = {
                     "entry_date"  : open_position["entry_date"],
                     "exit_date"   : str(date.date()),
@@ -192,6 +208,9 @@ def run_backtest() -> dict:
                     "exit_price"  : price_thb,
                     "size_bw"     : open_position["size_bw"],
                     "cost_thb"    : open_position["cost_thb"],
+                    "open_fee"    : open_fee,
+                    "close_fee"   : close_fee,
+                    "total_fees"  : total_fees,
                     "pnl_thb"     : pnl_thb,
                     "pnl_pct"     : round(pnl_thb / open_position["cost_thb"] * 100, 2),
                     "outcome"     : outcome,
@@ -199,7 +218,7 @@ def run_backtest() -> dict:
                 closed_trades.append(trade)
                 open_position = None
                 action = f"CLOSED [{outcome}]"
-                print(f"  >> SELL executed | proceeds ฿{proceeds:,.2f} | P&L {pnl_thb:+.2f} [{outcome}]")
+                print(f"  >> SELL executed | net ฿{net_proceeds:,.2f} | fee ฿{total_fees:.2f} | P&L {pnl_thb:+.2f} [{outcome}]")
             else:
                 action = "SKIP (no position)"
 
@@ -228,11 +247,12 @@ def run_backtest() -> dict:
     if open_position:
         final_equity += open_position["size_bw"] * last_price_thb
 
-    wins      = [t for t in closed_trades if t["outcome"] == "WIN"]
-    losses    = [t for t in closed_trades if t["outcome"] == "LOSS"]
-    total_pnl = sum(t["pnl_thb"] for t in closed_trades)
-    win_rate  = len(wins) / len(closed_trades) * 100 if closed_trades else 0.0
-    ret_pct   = (final_equity - INITIAL_BALANCE_THB) / INITIAL_BALANCE_THB * 100
+    wins       = [t for t in closed_trades if t["outcome"] == "WIN"]
+    losses     = [t for t in closed_trades if t["outcome"] == "LOSS"]
+    total_pnl  = sum(t["pnl_thb"] for t in closed_trades)
+    total_fees = sum(t.get("total_fees", 0.0) for t in closed_trades)
+    win_rate   = len(wins) / len(closed_trades) * 100 if closed_trades else 0.0
+    ret_pct    = (final_equity - INITIAL_BALANCE_THB) / INITIAL_BALANCE_THB * 100
 
     summary = {
         "period_start"  : daily_log[0]["date"] if daily_log else "—",
@@ -243,6 +263,7 @@ def run_backtest() -> dict:
         "losses"        : len(losses),
         "win_rate"      : round(win_rate, 1),
         "total_pnl"     : round(total_pnl, 2),
+        "total_fees"    : round(total_fees, 2),
         "initial"       : INITIAL_BALANCE_THB,
         "final_equity"  : round(final_equity, 2),
         "return_pct"    : round(ret_pct, 2),
@@ -255,7 +276,8 @@ def run_backtest() -> dict:
     print(f"  Days run     : {summary['days_run']}")
     print(f"  Closed trades: {summary['total_trades']}  (wins {summary['wins']}  losses {summary['losses']})")
     print(f"  Win rate     : {summary['win_rate']:.1f}%")
-    print(f"  Total P&L    : ฿{summary['total_pnl']:+,.2f}")
+    print(f"  Total fees   : ฿{summary['total_fees']:,.2f}")
+    print(f"  Total P&L    : ฿{summary['total_pnl']:+,.2f}  (net of fees)")
     print(f"  Initial      : ฿{summary['initial']:,.2f}")
     print(f"  Final equity : ฿{summary['final_equity']:,.2f}")
     print(f"  Return       : {summary['return_pct']:+.2f}%")
