@@ -1307,9 +1307,19 @@ def build_ui() -> gr.Blocks:
         except Exception as e:
             print(f"[dashboard] Countdown timer not available ({e})")
 
-        # Toggle change instantly refreshes the banner + dims/lights decision
+        # Toggle change: notify background scheduler + refresh UI
+        def _on_trade_mode_change(enabled: bool):
+            # Update the background scheduler flag so trades fire
+            # even when no browser tab is open.
+            try:
+                from main import set_trade_mode
+                set_trade_mode(enabled)
+            except Exception:
+                pass  # non-critical if called outside main.py context
+            return run_full_analysis(enabled)
+
         trade_mode_toggle.change(
-            fn=run_full_analysis,
+            fn=_on_trade_mode_change,
             inputs=[trade_mode_toggle],
             outputs=outputs,
         )
