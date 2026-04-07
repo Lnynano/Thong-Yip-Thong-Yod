@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 backtest.py
-Replay historical OHLCV data candle-by-candle through the Claude gold agent.
+Replay historical OHLCV data candle-by-candle through the gold trading agent.
 
 Usage:
     cd gold-agent
@@ -16,7 +16,7 @@ Notes:
     - Starts from candle 20 (minimum for Bollinger Bands to be valid)
     - Uses a fixed USD/THB rate of 34.5 for consistent conversion
     - News uses mock headlines (not real historical news)
-    - Each candle makes 1 Claude API call — use BACKTEST_MAX_CANDLES env var
+    - Each candle makes 1 API call — use BACKTEST_MAX_CANDLES env var
       to cap the run (default 50 candles) and keep API costs reasonable
 """
 
@@ -132,7 +132,7 @@ def run_backtest() -> dict:
     daily_log      = []
 
     import data.fetch as fetch_module
-    from agent.claude_agent import run_agent
+    from agent.trading_agent import run_agent
 
     for i in range(MIN_ROWS - 1, len(df_full)):
         window     = df_full.iloc[: i + 1].copy()

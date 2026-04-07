@@ -4,7 +4,7 @@ Daily macro market context agent — runs once per day, caches result.
 
 Analyzes 90-day gold price data + recent news to produce a daily market bias
 (Uptrend / Downtrend / Sideways) and trend strength. This context is injected
-into the main ReAct agent's get_indicators tool result so Claude has a macro
+into the main ReAct agent's get_indicators tool result so the agent has a macro
 view without needing extra API calls every 5 minutes.
 
 Storage strategy (auto-detected):
@@ -12,7 +12,7 @@ Storage strategy (auto-detected):
   - Not set          →  local data/daily_market.json
 
 Cache TTL: 1 day — re-runs automatically after midnight Thai time.
-Model: claude-haiku (cheap, fast, sufficient for trend summary)
+Model: gpt-4o-mini (cheap, fast, sufficient for trend summary)
 """
 
 import json
@@ -97,7 +97,7 @@ def _is_cache_valid(cache: dict) -> bool:
 # Analysis
 # ─────────────────────────────────────────────────────────────
 def _run_analysis() -> dict:
-    """Call Claude Haiku to analyze macro gold trend for today."""
+    """Call GPT-4o-mini to analyze macro gold trend for today."""
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         print("[daily_market_agent.py] No API key — skipping analysis.")

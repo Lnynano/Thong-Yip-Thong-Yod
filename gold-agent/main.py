@@ -7,12 +7,12 @@ End-to-end architecture:
 
 Module pipeline:
   data.fetch → indicators.tech → news.sentiment →
-  converter.thai → agent.claude_agent → risk.metrics → ui.dashboard
+  converter.thai → agent.trading_agent → risk.metrics → ui.dashboard
 
 Key design decisions:
   - Deterministic pipeline : fetch, indicators, converter, risk
-  - Stochastic component   : claude_agent only
-  - Safety bounds          : validated in claude_agent before display
+  - Stochastic component   : trading_agent only
+  - Safety bounds          : validated in trading_agent before display
   - AGENTS.md              : see AGENTS.md for AI-readable project rules
 
 Usage:

@@ -4,7 +4,7 @@ Fetches gold-related news headlines from NewsAPI.
 Falls back to a rotating pool of mock headlines if the API key is missing,
 so the app always shows different headlines each refresh.
 
-Sentiment scoring uses Claude Haiku for nuanced analysis.
+Sentiment scoring uses GPT-4o-mini for nuanced analysis.
 Falls back to keyword counting if the API call fails.
 """
 
@@ -134,9 +134,9 @@ def _keyword_sentiment(headlines: list[str]) -> str:
 
 def get_sentiment_summary(headlines: list[str]) -> str:
     """
-    Score gold news sentiment using Claude Haiku.
+    Score gold news sentiment using GPT-4o-mini.
 
-    Sends headlines to Claude Haiku (temperature=0) and asks for a JSON
+    Sends headlines to GPT-4o-mini (temperature=0) and asks for a JSON
     sentiment label. Falls back to keyword counting if the API key is
     missing or the call fails.
 
@@ -178,13 +178,13 @@ def get_sentiment_summary(headlines: list[str]) -> str:
             result = _keyword_sentiment(headlines)
             _sentiment_cache.update({"key": cache_key, "value": result, "ts": now})
             return result
-        # Extract JSON even if Claude wraps it in markdown code fences
+        # Extract JSON even if the model wraps it in markdown code fences
         start = raw.find("{")
         end   = raw.rfind("}") + 1
         data = json.loads(raw[start:end] if start != -1 else raw)
         label = data.get("sentiment", "").upper()
         if label in ("BULLISH", "BEARISH", "NEUTRAL"):
-            print(f"[sentiment.py] Claude sentiment: {label}")
+            print(f"[sentiment.py] GPT sentiment: {label}")
             _sentiment_cache.update({"key": cache_key, "value": label, "ts": now})
             return label
         result = _keyword_sentiment(headlines)
@@ -192,7 +192,7 @@ def get_sentiment_summary(headlines: list[str]) -> str:
         return result
 
     except Exception as e:
-        print(f"[sentiment.py] Claude sentiment failed ({e}). Falling back to keywords.")
+        print(f"[sentiment.py] GPT sentiment failed ({e}). Falling back to keywords.")
         return _keyword_sentiment(headlines)
 
 
