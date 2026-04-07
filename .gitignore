@@ -215,6 +215,10 @@ __marimo__/
 claude.md
 .gradio
 
+# ── Internal dev artifacts ────────────────────────────────────────────────────
+docs/superpowers/
+gold-agent/docs/
+
 # ── Project data files (never commit runtime state) ───────────────────────────
 portfolio.json
 analysis_log.csv

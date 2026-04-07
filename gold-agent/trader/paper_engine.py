@@ -148,7 +148,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
 
     Args:
         decision   : "BUY", "SELL", or "HOLD"
-        confidence : 0-100 from Claude
+        confidence : 0-100 from the agent
         price_thb  : current gold price THB per baht-weight (96.5% purity)
 
     Returns:
@@ -161,7 +161,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
 
     now = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
-    # ── Auto TP/SL check (overrides Claude decision) ─────────
+    # ── Auto TP/SL check (overrides agent decision) ─────────
     pos = state["open_position"]
     if pos is not None:
         change_pct = (price_thb - pos["entry_price"]) / pos["entry_price"]

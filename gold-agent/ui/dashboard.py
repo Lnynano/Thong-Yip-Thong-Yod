@@ -947,8 +947,8 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         rate     = thb["usd_thb_rate"]
         rate_src = thb["rate_source"]
 
-        # 6. Claude agent
-        from agent.claude_agent import run_agent
+        # 6. Trading agent
+        from agent.trading_agent import run_agent
         agent      = run_agent()
         decision   = agent.get("decision", "HOLD")
         confidence = agent.get("confidence", 0)
@@ -1221,9 +1221,9 @@ def build_ui() -> gr.Blocks:
                 gr.HTML(
                     '<div style="font-family:Courier New,monospace; color:#555; '
                     'font-size:0.75em; padding:8px 0; letter-spacing:0.08em;">'
-                    'Replay 20 days of historical XAUUSD data through the Claude agent.  '
+                    'Replay 20 days of historical XAUUSD data through the trading agent.  '
                     'Uses embedded CSV data — no live API needed for price.  '
-                    'Each run costs ~20 Claude Sonnet calls.'
+                    'Each run costs ~20 GPT-4o-mini calls.'
                     '</div>'
                 )
                 bt_run_btn      = gr.Button("▶  RUN BACKTEST", variant="primary", size="sm")
