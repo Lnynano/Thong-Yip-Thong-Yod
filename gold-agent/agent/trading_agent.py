@@ -54,6 +54,16 @@ geopolitical impact, and combining it with mathematical indicators.
 Example: If RSI=75 (overbought) BUT news says "Fed cuts rates by 50bps"
 → Override the overbought signal and BUY, because rate cuts are massively bullish for Gold.
 
+# MACRO CONTEXT (DXY + VIX)
+get_indicators also returns DXY and VIX — use them:
+- DXY (US Dollar Index): Gold has INVERSE correlation with USD.
+  DXY rising → dollar strong → gold headwind (bearish)
+  DXY falling → dollar weak → gold tailwind (bullish)
+- VIX (Fear Index): Gold is a safe-haven asset.
+  VIX > 20 → fear rising → gold safe-haven demand rises (bullish)
+  VIX > 30 → high fear   → very bullish for gold
+  VIX < 15 → complacency → reduced safe-haven demand (neutral/bearish)
+
 # DECISION CRITERIA
 - BUY  : RSI < 40 AND/OR MACD histogram positive AND/OR bullish macro news
          Confidence > 60% required
@@ -253,31 +263,38 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
             except Exception:
                 daily_summary = ""
 
-            # ── DXY (US Dollar Index) — inverse correlation with gold ────────
+            # ── DXY + VIX macro indicators ───────────────────────────────────
             dxy_context = {}
+            vix_context = {}
             try:
-                import yfinance as yf
-                dxy_df = yf.download("DX-Y.NYB", period="10d", interval="1d", progress=False)
-                if not dxy_df.empty and len(dxy_df) >= 2:
-                    dxy_now    = float(dxy_df["Close"].iloc[-1])
-                    dxy_prev   = float(dxy_df["Close"].iloc[-2])
-                    dxy_change = round((dxy_now - dxy_prev) / dxy_prev * 100, 3)
-                    if dxy_change > 0.05:
-                        dxy_signal = "BEARISH_GOLD"
+                from data.fetch import get_macro_indicators
+                macro = get_macro_indicators()
+
+                dxy = macro.get("dxy", {})
+                if dxy:
+                    if dxy["signal"] == "BEARISH_GOLD":
                         sell_score += 1
-                    elif dxy_change < -0.05:
-                        dxy_signal = "BULLISH_GOLD"
+                    elif dxy["signal"] == "BULLISH_GOLD":
                         buy_score  += 1
-                    else:
-                        dxy_signal = "NEUTRAL"
                     dxy_context = {
-                        "value":      round(dxy_now, 3),
-                        "change_pct": dxy_change,
-                        "signal":     dxy_signal,
-                        "note":       "DXY up = gold headwind. DXY down = gold tailwind.",
+                        "value"     : dxy["value"],
+                        "change_pct": dxy["change_pct"],
+                        "signal"    : dxy["signal"],
+                        "note"      : "DXY up = gold headwind. DXY down = gold tailwind.",
+                    }
+
+                vix = macro.get("vix", {})
+                if vix:
+                    if "BULLISH_GOLD" in vix["signal"]:
+                        buy_score += 1
+                    vix_context = {
+                        "value"     : vix["value"],
+                        "change_pt" : vix["change_pct"],
+                        "signal"    : vix["signal"],
+                        "note"      : "VIX>20=fear rising=gold safe-haven demand. VIX<15=risk-on=gold neutral.",
                     }
             except Exception as e:
-                print(f"[trading_agent.py] DXY fetch failed (non-critical): {e}")
+                print(f"[trading_agent.py] DXY/VIX fetch failed (non-critical): {e}")
 
             # Multi-timeframe: H1 context
             h1_context = {}
@@ -340,6 +357,8 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
             }
             if dxy_context:
                 result["dxy_usd_index"] = dxy_context
+            if vix_context:
+                result["vix_fear_index"] = vix_context
             if h1_context:
                 result["h1_intraday"] = h1_context
                 result["mtf_note"] = (

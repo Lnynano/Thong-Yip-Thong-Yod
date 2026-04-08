@@ -33,7 +33,7 @@ CONF_THRESHOLD  = 65
 # ── Risk management constants ─────────────────────────────────
 TAKE_PROFIT_PCT = 0.015   # +1.5% → auto SELL (lock profit)
 STOP_LOSS_PCT   = -0.010  # -1.0% → auto SELL (cut loss)
-COOLDOWN_ROUNDS = 2       # rounds to skip after closing a trade
+COOLDOWN_ROUNDS = 0       # disabled — 30-min interval + 65% confidence gate is sufficient protection
 
 # ── Trading fee constants (loaded from env) ───────────────────
 # Applied on every transaction (both open and close).
