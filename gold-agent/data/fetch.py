@@ -2,10 +2,15 @@
 data/fetch.py
 Fetches live XAUUSD (Gold) price data using yfinance.
 Returns the last 90 days of OHLCV as a pandas DataFrame.
+
+Also provides get_hsh_price() — live gold price from Hua Seng Heng
+(apicheckpricev3.huasengheng.com) which is the official price source
+for the Thammasat University trading competition.
 """
 
 import yfinance as yf
 import pandas as pd
+import requests
 from datetime import datetime, timedelta, timezone
 
 # Thai timezone UTC+7
@@ -121,9 +126,197 @@ def get_gold_price_intraday(interval: str = "1h", days: int = 5) -> pd.DataFrame
         return pd.DataFrame()
 
 
+def get_macro_indicators() -> dict:
+    """
+    Fetch DXY (US Dollar Index) and VIX (Fear Index) — key macro drivers for gold.
+
+    Gold has strong inverse correlation with DXY and positive correlation with VIX.
+        DXY up   → dollar strengthening → gold headwind
+        DXY down → dollar weakening     → gold tailwind
+        VIX > 20 → fear rising          → gold safe-haven demand rises
+        VIX < 15 → complacency          → gold safe-haven demand falls
+
+    Returns:
+        dict: {
+            "dxy": {"value", "change_pct", "signal", "raw"},
+            "vix": {"value", "change_pct", "signal", "raw"},
+        }
+        Returns empty dicts for each on failure (non-critical).
+    """
+    result = {"dxy": {}, "vix": {}}
+
+    try:
+        import yfinance as yf
+
+        raw = yf.download(
+            ["DX-Y.NYB", "^VIX"],
+            period="5d",
+            interval="1d",
+            progress=False,
+            auto_adjust=True,
+        )
+
+        close = raw["Close"] if "Close" in raw.columns else raw
+
+        # ── DXY ──────────────────────────────────────────────────────────────
+        try:
+            dxy_s  = close["DX-Y.NYB"].dropna()
+            if len(dxy_s) >= 2:
+                dxy_now    = float(dxy_s.iloc[-1])
+                dxy_prev   = float(dxy_s.iloc[-2])
+                dxy_chg    = round((dxy_now - dxy_prev) / dxy_prev * 100, 3)
+                if dxy_chg > 0.1:
+                    dxy_sig = "BEARISH_GOLD"
+                elif dxy_chg < -0.1:
+                    dxy_sig = "BULLISH_GOLD"
+                else:
+                    dxy_sig = "NEUTRAL"
+                result["dxy"] = {
+                    "value"     : round(dxy_now, 2),
+                    "change_pct": dxy_chg,
+                    "signal"    : dxy_sig,
+                    "label"     : f"{dxy_now:.2f}  ({dxy_chg:+.2f}%)  {dxy_sig}",
+                }
+        except Exception as e:
+            print(f"[fetch.py] DXY parse error: {e}")
+
+        # ── VIX ──────────────────────────────────────────────────────────────
+        try:
+            vix_s  = close["^VIX"].dropna()
+            if len(vix_s) >= 2:
+                vix_now  = float(vix_s.iloc[-1])
+                vix_prev = float(vix_s.iloc[-2])
+                vix_chg  = round(vix_now - vix_prev, 2)
+                if vix_now >= 30:
+                    vix_sig = "HIGH_FEAR (BULLISH_GOLD)"
+                elif vix_now >= 20:
+                    vix_sig = "ELEVATED (BULLISH_GOLD)"
+                elif vix_now <= 15:
+                    vix_sig = "LOW_FEAR (NEUTRAL_GOLD)"
+                else:
+                    vix_sig = "MODERATE"
+                result["vix"] = {
+                    "value"     : round(vix_now, 2),
+                    "change_pct": vix_chg,
+                    "signal"    : vix_sig,
+                    "label"     : f"{vix_now:.2f}  ({vix_chg:+.2f})  {vix_sig}",
+                }
+        except Exception as e:
+            print(f"[fetch.py] VIX parse error: {e}")
+
+    except Exception as e:
+        print(f"[fetch.py] Macro indicators fetch failed (non-critical): {e}")
+
+    return result
+
+
+# ─────────────────────────────────────────────────────────────
+# Hua Seng Heng live price (official competition price source)
+# ─────────────────────────────────────────────────────────────
+_HSH_PRICE_URL  = "https://apicheckpricev3.huasengheng.com/api/Values/GetPrice"
+_HSH_STATUS_URL = "https://apicheckpricev3.huasengheng.com/api/Values/GetMarketStatus"
+
+
+def get_hsh_price() -> dict:
+    """
+    Fetch live gold price from Hua Seng Heng (ออมทอง API).
+
+    Uses GoldType == "HSH" — Hua Seng Heng's own 96.5% purity gold prices,
+    which are the official prices used in the Thammasat competition.
+
+    Price semantics:
+        Sell  — price YOU pay to buy gold from HSH  (entry price)
+        Buy   — price YOU receive when selling back (exit price)
+
+    Returns:
+        dict: {
+            "sell"         : float,   # entry price (THB per baht-weight)
+            "buy"          : float,   # exit price  (THB per baht-weight)
+            "mid"          : float,   # (sell + buy) / 2
+            "spread"       : float,   # sell - buy
+            "timestamp"    : str,     # e.g. "18:23:35"
+            "market_status": str,     # "ON" or "OFF"
+            "source"       : str,     # "hsh" always
+        }
+        Returns empty dict on failure — caller must handle fallback.
+    """
+    try:
+        resp = requests.get(_HSH_PRICE_URL, timeout=5)
+        resp.raise_for_status()
+        data = resp.json()
+
+        # Find the HSH entry (Hua Seng Heng own prices)
+        hsh_entry = next(
+            (item for item in data if item.get("GoldType") == "HSH"),
+            None
+        )
+        if hsh_entry is None:
+            print("[fetch.py] HSH price: GoldType 'HSH' not found in response.")
+            return {}
+
+        sell  = float(str(hsh_entry["Sell"]).replace(",", ""))
+        buy   = float(str(hsh_entry["Buy"]).replace(",", ""))
+        ts    = hsh_entry.get("StrTimeUpdate", hsh_entry.get("TimeUpdate", ""))
+
+        try:
+            print(f"[fetch.py] HSH price  Sell={sell:,.0f}  Buy={buy:,.0f}  "
+                  f"Spread={sell - buy:,.0f} THB  @ {ts}")
+        except UnicodeEncodeError:
+            print(f"[fetch.py] HSH price  Sell={sell:,.0f}  Buy={buy:,.0f}  "
+                  f"Spread={sell - buy:,.0f} THB")
+
+        return {
+            "sell"         : sell,
+            "buy"          : buy,
+            "mid"          : round((sell + buy) / 2, 2),
+            "spread"       : round(sell - buy, 2),
+            "timestamp"    : str(ts),
+            "market_status": get_hsh_market_status(),
+            "source"       : "hsh",
+        }
+
+    except Exception as e:
+        print(f"[fetch.py] HSH price fetch failed: {e}")
+        return {}
+
+
+def get_hsh_market_status() -> str:
+    """
+    Return Hua Seng Heng market status: "ON" or "OFF".
+    Returns "UNKNOWN" on failure.
+    """
+    try:
+        resp = requests.get(_HSH_STATUS_URL, timeout=3)
+        resp.raise_for_status()
+        data = resp.json()
+        return str(data.get("MarketStatus", "UNKNOWN")).upper()
+    except Exception as e:
+        print(f"[fetch.py] HSH market status fetch failed: {e}")
+        return "UNKNOWN"
+
+
 # Allow standalone testing
 if __name__ == "__main__":
     df = get_gold_price()
     print(df.tail())
     print(f"\nLatest price : ${get_latest_price():.2f}")
     print(f"Fetched at   : {get_fetch_time()}")
+
+    print("\n--- Macro Indicators ---")
+    macro = get_macro_indicators()
+    dxy = macro.get("dxy", {})
+    vix = macro.get("vix", {})
+    print(f"DXY : {dxy.get('label', 'N/A')}")
+    print(f"VIX : {vix.get('label', 'N/A')}")
+
+    print("\n--- Hua Seng Heng Live Price ---")
+    hsh = get_hsh_price()
+    if hsh:
+        print(f"Sell (entry) : ฿{hsh['sell']:,.2f}")
+        print(f"Buy  (exit)  : ฿{hsh['buy']:,.2f}")
+        print(f"Mid          : ฿{hsh['mid']:,.2f}")
+        print(f"Spread       : ฿{hsh['spread']:,.2f}")
+        print(f"Market       : {hsh['market_status']}")
+        print(f"Updated      : {hsh['timestamp']}")
+    else:
+        print("HSH price unavailable.")
