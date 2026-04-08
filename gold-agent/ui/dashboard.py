@@ -43,13 +43,42 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 # │    4. CLEAR LOG button
 # │    5. Backtest tab
 # └─────────────────────────────────────────────────────────────────────────────
-DEV_MODE: bool = False   # ← change to False before deploying
+DEV_MODE: bool = True   # ← change to False before deploying
 
-_INTERVALS = {"REAL": 300, "TEST": 15}
+_INTERVALS = {"REAL": 1800, "TEST": 15}
 _current_mode: str = "REAL"
 
 # Tracks when the last full analysis ran — used for countdown display
 _last_refresh_time: float = time.time()
+
+# ─────────────────────────────────────────────────────────────
+# UI state persistence — survives page refresh
+# ─────────────────────────────────────────────────────────────
+_BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_UI_STATE_PATH = os.path.join(_BASE_DIR, "data", "ui_state.json")
+_UI_STATE_DEFAULTS = {"trade_mode": False, "refresh_mode": "REAL"}
+
+
+def _load_ui_state() -> dict:
+    """Load persisted UI state; returns defaults if file missing or corrupt."""
+    try:
+        with open(_UI_STATE_PATH, "r") as f:
+            state = json.load(f)
+        return {**_UI_STATE_DEFAULTS, **state}
+    except Exception:
+        return dict(_UI_STATE_DEFAULTS)
+
+
+def _save_ui_state(**kwargs) -> None:
+    """Merge kwargs into saved UI state file."""
+    try:
+        state = _load_ui_state()
+        state.update(kwargs)
+        os.makedirs(os.path.dirname(_UI_STATE_PATH), exist_ok=True)
+        with open(_UI_STATE_PATH, "w") as f:
+            json.dump(state, f)
+    except Exception:
+        pass  # non-critical
 
 
 def _set_mode(mode: str) -> None:
@@ -57,6 +86,7 @@ def _set_mode(mode: str) -> None:
     global _current_mode, _last_refresh_time
     _current_mode = mode
     _last_refresh_time = time.time()
+    _save_ui_state(refresh_mode=mode)
 
 
 def _tick_countdown() -> str:
@@ -69,8 +99,8 @@ def _tick_countdown() -> str:
     filled    = int((elapsed / interval) * 20)
     filled    = min(filled, 20)
     bar       = "#" * filled + "-" * (20 - filled)   # ASCII-safe, renders in any font
-    label     = "TEST 15s" if _current_mode == "TEST" else "REAL 5min"
-    return f"Next refresh in  {mins}:{secs:02d}  [{bar}]"
+
+    return f"Next refresh in  {mins}:{secs:02d}  [{bar}] "
 
 # ─────────────────────────────────────────────────────────────
 # Dark PNS-style CSS
@@ -1016,7 +1046,7 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         outcome_bar  = _outcome_bar_html(outcomes)
         trade_table  = _trade_table_html(trades, portfolio.get("open_position"))
         thai_now     = __import__('datetime').datetime.now(THAI_TZ).strftime("%H:%M:%S")
-        last_updated = f"Last updated: {thai_now} (TH)  ·  auto-refresh every 5 min"
+        last_updated = f"Last updated: {thai_now} (TH)  ·  auto-refresh every 30 min"
         tm_html      = _trade_mode_html(trade_mode)
 
         # Status bar message
@@ -1094,6 +1124,13 @@ def _error_outputs(msg: str, trade_mode: bool = False) -> tuple:
 def build_ui() -> gr.Blocks:
     """Build and return the PNS-style Gradio dashboard."""
 
+    # Restore UI state from last session
+    _saved = _load_ui_state()
+    _init_trade_mode: bool = _saved["trade_mode"]
+    _init_refresh_mode: str = _saved["refresh_mode"]
+    # Apply saved refresh mode to global so countdown starts correctly
+    _set_mode(_init_refresh_mode)
+
     with gr.Blocks(title="Thong Yip Thong Yod") as demo:
 
         # ── Header ──────────────────────────────────────────
@@ -1113,7 +1150,7 @@ def build_ui() -> gr.Blocks:
         with gr.Row(visible=DEV_MODE):
             trade_mode_toggle = gr.Checkbox(
                 label="TRADE MODE  —  enable to execute paper trades automatically",
-                value=False,
+                value=_init_trade_mode,
                 scale=3,
             )
             gr.HTML(
@@ -1127,8 +1164,8 @@ def build_ui() -> gr.Blocks:
         with gr.Row(visible=DEV_MODE):
             mode_radio = gr.Radio(
                 choices=["REAL", "TEST"],
-                value="REAL",
-                label="REFRESH MODE  —  REAL = every 5 min  ·  TEST = every 15 sec",
+                value=_init_refresh_mode,
+                label="REFRESH MODE  —  REAL = every 30 min  ·  TEST = every 15 sec",
                 interactive=True,
                 scale=3,
             )
@@ -1296,9 +1333,9 @@ def build_ui() -> gr.Blocks:
         except Exception as e:
             print(f"[dashboard] gr.Timer not available ({e}); auto-refresh disabled.")
 
-        # Countdown ticker — fires every 1 second, very lightweight
+        # Countdown ticker — fires every 30 seconds (was 1s; 1s caused Render WebSocket congestion)
         try:
-            countdown_timer = gr.Timer(value=1)
+            countdown_timer = gr.Timer(value=30)
             countdown_timer.tick(
                 fn=_tick_countdown,
                 inputs=[],
@@ -1309,6 +1346,8 @@ def build_ui() -> gr.Blocks:
 
         # Toggle change: notify background scheduler + refresh UI
         def _on_trade_mode_change(enabled: bool):
+            # Persist so the toggle survives page refresh
+            _save_ui_state(trade_mode=enabled)
             # Update the background scheduler flag so trades fire
             # even when no browser tab is open.
             try:
