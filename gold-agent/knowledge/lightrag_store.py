@@ -203,8 +203,11 @@ def insert_headlines(headlines: list[str]) -> None:
 
     try:
         future = _executor.submit(_insert_in_thread, headlines)
-        future.result(timeout=60)
+        future.result(timeout=10)   # 10s max — avoid blocking Gradio UI
         _last_inserted_hash = current_hash
+    except concurrent.futures.TimeoutError:
+        print("[lightrag_store.py] Insert timed out (10s) — continuing anyway")
+        _last_inserted_hash = current_hash  # still mark as done to avoid re-trying
     except Exception as e:
         print(f"[lightrag_store.py] Insert failed: {e}")
 
@@ -224,7 +227,10 @@ def query_gold_context(question: str) -> str:
     """
     try:
         future = _executor.submit(_query_in_thread, question)
-        return future.result(timeout=60)
+        return future.result(timeout=10)   # 10s max — avoid blocking Gradio UI
+    except concurrent.futures.TimeoutError:
+        print("[lightrag_store.py] Query timed out (10s) — returning empty context")
+        return ""
     except Exception as e:
         print(f"[lightrag_store.py] Query failed: {e}")
         return ""

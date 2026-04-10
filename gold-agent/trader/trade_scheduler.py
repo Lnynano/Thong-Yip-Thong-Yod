@@ -27,13 +27,6 @@ _STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "scheduler_s
 # Each window: (start_hour_min, end_hour_min, quota)
 # Represented as (h*60+m) minutes-since-midnight for easy comparison
 
-_WEEKDAY_WINDOWS = [
-    {"name": "W1-early",    "start": 0*60+0,   "end": 2*60+0,    "quota": 2},
-    {"name": "W1-morning",  "start": 6*60+0,   "end": 11*60+59,  "quota": 0},  # shares quota with W1-early
-    {"name": "W2-afternoon","start": 12*60+0,  "end": 17*60+59,  "quota": 2},
-    {"name": "W3-evening",  "start": 18*60+0,  "end": 23*60+59,  "quota": 2},
-]
-
 # Window 1 on weekdays is split (00:00-02:00 + 06:00-11:59) but shares 2-trade quota
 # Simplify: treat as one logical window with 2 slots
 _WEEKDAY_LOGICAL = [

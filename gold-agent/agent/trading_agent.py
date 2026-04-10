@@ -66,9 +66,9 @@ get_indicators also returns DXY and VIX — use them:
 
 # DECISION CRITERIA
 - BUY  : RSI < 40 AND/OR MACD histogram positive AND/OR bullish macro news
-         Confidence > 60% required
+         Confidence >= 65% required
 - SELL : RSI > 65 AND/OR MACD histogram negative AND/OR bearish macro news
-         Confidence > 60% required
+         Confidence >= 65% required
 - HOLD : Mixed signals, RSI 40-65, contradicting indicators, low news conviction
 
 # OUTPUT FORMAT (machine-readable JSON only)
@@ -289,7 +289,7 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
                         buy_score += 1
                     vix_context = {
                         "value"     : vix["value"],
-                        "change_pt" : vix["change_pct"],
+                        "change_pct": vix["change_pct"],
                         "signal"    : vix["signal"],
                         "note"      : "VIX>20=fear rising=gold safe-haven demand. VIX<15=risk-on=gold neutral.",
                     }
@@ -320,12 +320,16 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
             except Exception as e:
                 print(f"[trading_agent.py] H1 MTF fetch failed (non-critical): {e}")
 
+            # Cap scores to 0-5 range before comparison
+            buy_score  = min(buy_score, 5)
+            sell_score = min(sell_score, 5)
+
             result = {
                 "note": "All values are pre-computed deterministically. Do NOT recalculate.",
                 "timeframe": "D1 (primary)",
                 "pre_scored_signals": {
-                    "buy_score":       f"{min(buy_score, 5)} / 5",
-                    "sell_score":      f"{min(sell_score, 5)} / 5",
+                    "buy_score":       f"{buy_score} / 5",
+                    "sell_score":      f"{sell_score} / 5",
                     "bias":            "BUY" if buy_score > sell_score else "SELL" if sell_score > buy_score else "NEUTRAL",
                     "daily_trend":     daily_bias,
                     "trend_strength":  daily_strength,

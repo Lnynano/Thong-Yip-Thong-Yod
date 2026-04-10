@@ -419,6 +419,8 @@ def _price_html(price_thb: float, price_usd: float, change_thb: float,
     sign  = "+" if change_thb >= 0 else ""
     color = "#c9f002" if change_thb >= 0 else "#cc3333"
     change_pct = (change_thb / (price_thb - change_thb) * 100) if (price_thb - change_thb) != 0 else 0
+    safe_time = html.escape(str(fetch_time))
+    safe_src  = html.escape(str(rate_src))
     return f"""
 <div style="font-family:'Courier New',monospace; padding:20px 24px; background:#0f0f0f;
             border:1px solid #1e1e1e; border-radius:6px;">
@@ -434,8 +436,8 @@ def _price_html(price_thb: float, price_usd: float, change_thb: float,
   </div>
   <div style="color:#444; font-size:0.78em; margin-top:8px; letter-spacing:0.05em;">
     ${price_usd:,.2f} / troy oz &nbsp;·&nbsp;
-    {"HSH live price" if rate_src == "hsh" else f"rate {rate:.2f} ({rate_src})"} &nbsp;·&nbsp;
-    as of {fetch_time} &nbsp;·&nbsp; {"live" if rate_src == "hsh" else "15-min delay"}
+    {"HSH live price" if rate_src == "hsh" else f"rate {rate:.2f} ({safe_src})"} &nbsp;·&nbsp;
+    as of {safe_time} &nbsp;·&nbsp; {"live" if rate_src == "hsh" else "15-min delay"}
   </div>
 </div>"""
 
