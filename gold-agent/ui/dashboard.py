@@ -1049,8 +1049,8 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         except Exception:
             eq_chart = None
 
-        # 8. Log analysis
-        from logger.trade_log import log_analysis, get_recent_logs
+        # 8. Log analysis (internal CSV/MongoDB + professor's API)
+        from logger.trade_log import log_analysis, get_recent_logs, send_trade_log
         from risk.metrics import calculate_risk
         risk = calculate_risk(df)
         log_analysis(decision=decision, confidence=confidence,
@@ -1058,6 +1058,9 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
                      price_thb=f"฿{thb_now:,.0f}",
                      rsi=rsi_str, macd=macd_str,
                      sharpe=f"{risk['sharpe']:.2f}", reasoning=reasoning)
+        # Send to professor's trade log API (competition requirement)
+        send_trade_log(action=decision, price_thb=thb_now,
+                       reason=reasoning, confidence=confidence)
         log_df = get_recent_logs(50)
 
         # Build HTML blocks

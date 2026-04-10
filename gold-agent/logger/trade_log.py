@@ -9,6 +9,7 @@ Storage strategy (auto-detected):
 
 import os
 import csv
+import requests
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
@@ -91,6 +92,64 @@ def log_analysis(decision: str, confidence: int, price_usd: str,
             ])
     except Exception as e:
         print(f"[trade_log.py] CSV write failed: {e}")
+
+
+# ─────────────────────────────────────────────────────────────
+# Professor's Trade Log API (competition requirement)
+# ─────────────────────────────────────────────────────────────
+_TRADE_LOG_API_URL = "https://goldtrade-logs-api.poonnatuch.workers.dev/logs"
+
+
+def send_trade_log(action: str, price_thb: float, reason: str,
+                   confidence: int = 0) -> dict:
+    """
+    POST the agent decision to the professor's GoldTrade Logs API.
+
+    Required by competition rules — every signal must be logged.
+    Silent on failure (non-blocking).
+
+    Args:
+        action     : "BUY", "SELL", or "HOLD"
+        price_thb  : current gold price (THB per baht-weight)
+        reason     : agent reasoning (truncated to 200 chars)
+        confidence : agent confidence 0-100
+
+    Returns:
+        dict: API response on success, or {"error": "..."} on failure.
+    """
+    api_key = os.getenv("TRADE_LOG_API_KEY", "").strip()
+    if not api_key:
+        print("[trade_log.py] TRADE_LOG_API_KEY not set — skipping professor log")
+        return {"error": "TRADE_LOG_API_KEY not set"}
+
+    payload = {
+        "action":        action.upper(),
+        "price":         price_thb,
+        "reason":        reason[:200],
+        "confidence":    confidence,
+        "signal_source": "gold_agent_gpt4o_mini",
+    }
+
+    try:
+        resp = requests.post(
+            _TRADE_LOG_API_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type":  "application/json",
+            },
+            json=payload,
+            timeout=5,
+        )
+        data = resp.json()
+        if resp.status_code == 201:
+            print(f"[trade_log.py] Professor log OK: {action} @ {price_thb:,.0f} THB "
+                  f"(id={data.get('data', {}).get('id', '?')})")
+        else:
+            print(f"[trade_log.py] Professor log FAILED {resp.status_code}: {data}")
+        return data
+    except Exception as e:
+        print(f"[trade_log.py] Professor log error: {e}")
+        return {"error": str(e)}
 
 
 # ─────────────────────────────────────────────────────────────
