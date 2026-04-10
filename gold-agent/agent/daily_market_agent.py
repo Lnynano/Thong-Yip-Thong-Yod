@@ -142,6 +142,14 @@ Return JSON only, no other text:
             temperature= 0,
             messages   = [{"role": "user", "content": prompt}],
         )
+
+        # Track LLM cost
+        try:
+            from logger.cost_tracker import track_usage
+            track_usage(response.usage, source="daily_market")
+        except Exception:
+            pass
+
         text   = response.choices[0].message.content.strip()
         start  = text.find("{")
         end    = text.rfind("}") + 1

@@ -667,6 +667,10 @@ def _portfolio_html(p: dict) -> str:
     {stat("TRADES",        str(p['total_trades']))}
     {stat("R:R",           f"{p['rr_ratio']:.2f}:1" if p['rr_ratio'] > 0 else "—")}
     {stat("BALANCE",       f"฿{p['initial_balance']:,.0f}", "#555")}
+    {stat("LLM COST",     f"฿{p.get('llm_cost_thb', 0):,.2f}",
+          '#cc3333' if p.get('llm_cost_thb', 0) > 50 else '#888')}
+    {stat("NET BUDGET",   f"฿{p.get('net_budget', p['initial_balance']):,.2f}",
+          '#c9f002' if p.get('net_budget', 1500) > 1400 else '#cc3333')}
   </div>
   {pos_block}
 </div>"""
@@ -1040,6 +1044,17 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
             trade_result = {"action": "DISABLED", "reason": "Trade mode is OFF"}
 
         portfolio    = get_portfolio_summary(thb_now)
+
+        # Inject LLM cost into portfolio for dashboard display
+        try:
+            from logger.cost_tracker import get_cost_summary
+            cost = get_cost_summary()
+            portfolio["llm_cost_thb"] = cost["total_cost_thb"]
+            portfolio["net_budget"]   = cost["budget_remaining"]
+        except Exception:
+            portfolio["llm_cost_thb"] = 0.0
+            portfolio["net_budget"]   = portfolio["initial_balance"]
+
         trades       = get_trade_history(20)
         equity_hist  = get_equity_history()
         outcomes     = get_recent_outcomes(15)
