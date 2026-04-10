@@ -46,7 +46,7 @@ def calculate_rsi(df: pd.DataFrame, period: int = 14) -> float:
     try:
         if df.empty or "Close" not in df.columns:
             print("[tech.py] RSI: Empty DataFrame or missing 'Close' column.")
-            return 50.0
+            return 0.0
 
         close = df["Close"].copy()
         delta = close.diff()

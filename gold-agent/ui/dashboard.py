@@ -45,11 +45,40 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 # └─────────────────────────────────────────────────────────────────────────────
 DEV_MODE: bool = False   # ← change to False before deploying
 
-_INTERVALS = {"REAL": 300, "TEST": 15}
+_INTERVALS = {"REAL": 1800, "TEST": 15}
 _current_mode: str = "REAL"
 
 # Tracks when the last full analysis ran — used for countdown display
 _last_refresh_time: float = time.time()
+
+# ─────────────────────────────────────────────────────────────
+# UI state persistence — survives page refresh
+# ─────────────────────────────────────────────────────────────
+_BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_UI_STATE_PATH = os.path.join(_BASE_DIR, "data", "ui_state.json")
+_UI_STATE_DEFAULTS = {"trade_mode": False, "refresh_mode": "REAL"}
+
+
+def _load_ui_state() -> dict:
+    """Load persisted UI state; returns defaults if file missing or corrupt."""
+    try:
+        with open(_UI_STATE_PATH, "r") as f:
+            state = json.load(f)
+        return {**_UI_STATE_DEFAULTS, **state}
+    except Exception:
+        return dict(_UI_STATE_DEFAULTS)
+
+
+def _save_ui_state(**kwargs) -> None:
+    """Merge kwargs into saved UI state file."""
+    try:
+        state = _load_ui_state()
+        state.update(kwargs)
+        os.makedirs(os.path.dirname(_UI_STATE_PATH), exist_ok=True)
+        with open(_UI_STATE_PATH, "w") as f:
+            json.dump(state, f)
+    except Exception:
+        pass  # non-critical
 
 
 def _set_mode(mode: str) -> None:
@@ -57,6 +86,7 @@ def _set_mode(mode: str) -> None:
     global _current_mode, _last_refresh_time
     _current_mode = mode
     _last_refresh_time = time.time()
+    _save_ui_state(refresh_mode=mode)
 
 
 def _tick_countdown() -> str:
@@ -69,8 +99,8 @@ def _tick_countdown() -> str:
     filled    = int((elapsed / interval) * 20)
     filled    = min(filled, 20)
     bar       = "#" * filled + "-" * (20 - filled)   # ASCII-safe, renders in any font
-    label     = "TEST 15s" if _current_mode == "TEST" else "REAL 5min"
-    return f"Next refresh in  {mins}:{secs:02d}  [{bar}]"
+
+    return f"Next refresh in  {mins}:{secs:02d}  [{bar}] "
 
 # ─────────────────────────────────────────────────────────────
 # Dark PNS-style CSS
@@ -389,11 +419,13 @@ def _price_html(price_thb: float, price_usd: float, change_thb: float,
     sign  = "+" if change_thb >= 0 else ""
     color = "#c9f002" if change_thb >= 0 else "#cc3333"
     change_pct = (change_thb / (price_thb - change_thb) * 100) if (price_thb - change_thb) != 0 else 0
+    safe_time = html.escape(str(fetch_time))
+    safe_src  = html.escape(str(rate_src))
     return f"""
 <div style="font-family:'Courier New',monospace; padding:20px 24px; background:#0f0f0f;
             border:1px solid #1e1e1e; border-radius:6px;">
   <div style="color:#555; font-size:0.72em; letter-spacing:0.15em; margin-bottom:8px;">
-    XAUUSD  ·  GOLD (THB/BAHT-WEIGHT 96.5%)
+    {"HUA SENG HENG  ·  LIVE" if rate_src == "hsh" else "XAUUSD  ·  YFINANCE (CONVERTED)"}  ·  GOLD (THB/BAHT-WEIGHT 96.5%)
   </div>
   <div style="display:flex; align-items:baseline; gap:20px; flex-wrap:wrap;">
     <span style="color:#ffffff; font-size:3.2em; font-weight:900;
@@ -404,8 +436,8 @@ def _price_html(price_thb: float, price_usd: float, change_thb: float,
   </div>
   <div style="color:#444; font-size:0.78em; margin-top:8px; letter-spacing:0.05em;">
     ${price_usd:,.2f} / troy oz &nbsp;·&nbsp;
-    rate {rate:.2f} ({rate_src}) &nbsp;·&nbsp;
-    as of {fetch_time} &nbsp;·&nbsp; 15-min delay
+    {"HSH live price" if rate_src == "hsh" else f"rate {rate:.2f} ({safe_src})"} &nbsp;·&nbsp;
+    as of {safe_time} &nbsp;·&nbsp; {"live" if rate_src == "hsh" else "15-min delay"}
   </div>
 </div>"""
 
@@ -635,6 +667,10 @@ def _portfolio_html(p: dict) -> str:
     {stat("TRADES",        str(p['total_trades']))}
     {stat("R:R",           f"{p['rr_ratio']:.2f}:1" if p['rr_ratio'] > 0 else "—")}
     {stat("BALANCE",       f"฿{p['initial_balance']:,.0f}", "#555")}
+    {stat("LLM COST",     f"฿{p.get('llm_cost_thb', 0):,.2f}",
+          '#cc3333' if p.get('llm_cost_thb', 0) > 50 else '#888')}
+    {stat("NET BUDGET",   f"฿{p.get('net_budget', p['initial_balance']):,.2f}",
+          '#c9f002' if p.get('net_budget', 1500) > 1400 else '#cc3333')}
   </div>
   {pos_block}
 </div>"""
@@ -770,16 +806,19 @@ def _backtest_summary_html(summary: dict) -> str:
             background:#0f0f0f; border:1px solid #1e1e1e; border-radius:6px; margin-bottom:12px;">
   <div style="color:#555; font-size:0.7em; letter-spacing:0.15em; margin-bottom:10px;">
     BACKTEST RESULTS &nbsp;·&nbsp; {summary.get('period_start','—')} → {summary.get('period_end','—')}
+    &nbsp;·&nbsp; {summary.get('calendar_days', summary.get('days_run', 0))} calendar days
+    &nbsp;·&nbsp; {summary.get('candles_run', summary.get('days_run', 0))} x {summary.get('interval','—')} candles
   </div>
   <div style="display:flex; flex-wrap:wrap;">
-    {stat("RETURN",        f"{sign}{ret:.2f}%",                 col)}
-    {stat("FINAL EQUITY",  f"฿{summary.get('final_equity',0):,.2f}")}
-    {stat("TOTAL P&L",     f"{'+'if pnl>=0 else ''}฿{pnl:,.2f}", pnl_col)}
-    {stat("WIN RATE",      f"{summary.get('win_rate',0):.1f}%")}
-    {stat("TRADES",        str(summary.get('total_trades',0)))}
-    {stat("WINS",          str(summary.get('wins',0)),           "#c9f002")}
-    {stat("LOSSES",        str(summary.get('losses',0)),         "#cc3333")}
-    {stat("DAYS RUN",      str(summary.get('days_run',0)))}
+    {stat("RETURN",         f"{sign}{ret:.2f}%",                  col)}
+    {stat("FINAL EQUITY",   f"฿{summary.get('final_equity',0):,.2f}")}
+    {stat("TOTAL P&L",      f"{'+'if pnl>=0 else ''}฿{pnl:,.2f}", pnl_col)}
+    {stat("WIN RATE",       f"{summary.get('win_rate',0):.1f}%")}
+    {stat("TRADES",         str(summary.get('total_trades',0)))}
+    {stat("WINS",           str(summary.get('wins',0)),            "#c9f002")}
+    {stat("LOSSES",         str(summary.get('losses',0)),          "#cc3333")}
+    {stat("CALENDAR DAYS",  str(summary.get('calendar_days', summary.get('days_run', 0))))}
+    {stat("CANDLES",        f"{summary.get('candles_run', summary.get('days_run',0))} x {summary.get('interval','—')}")}
   </div>
 </div>"""
 
@@ -864,9 +903,12 @@ def _run_backtest_ui() -> tuple:
         summary_html = _backtest_summary_html(summary)
         trades_html  = _backtest_trades_html(trades)
         eq_chart     = _backtest_equity_chart(log)
-        status       = (f"✅ Backtest complete  ·  {summary['days_run']} days  ·  "
-                        f"Return {'+' if summary['return_pct']>=0 else ''}{summary['return_pct']:.2f}%  ·  "
-                        f"Win rate {summary['win_rate']:.1f}%")
+        cal  = summary.get('calendar_days', summary['days_run'])
+        bars = summary.get('candles_run',  summary['days_run'])
+        ivl  = summary.get('interval', '?')
+        status = (f"✅ Backtest complete  ·  {cal} calendar days  ·  {bars}x{ivl} candles  ·  "
+                  f"Return {'+' if summary['return_pct']>=0 else ''}{summary['return_pct']:.2f}%  ·  "
+                  f"Win rate {summary['win_rate']:.1f}%")
         return summary_html, trades_html, eq_chart, status
     except Exception as e:
         err = f'<div style="color:#cc3333; padding:16px; font-family:Courier New,monospace;">Backtest failed: {html.escape(str(e))}</div>'
@@ -884,12 +926,13 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         trade_mode: When True, paper trades are executed automatically.
                     When False, analysis runs but NO trades are placed.
 
-    Returns 16 values:
+    Returns 18 values:
         price_html, decision_html_out,
         last_updated, price_chart_fig, rsi_chart_fig, rsi_str, macd_str,
         portfolio_html, equity_chart, outcome_bar_html,
         trade_table_html, news_html_out, log_df,
-        indicators_str, status, trade_mode_status_html
+        indicators_str, status, trade_mode_status_html,
+        dxy_str, vix_str
     """
     global _last_refresh_time
     _last_refresh_time = time.time()   # reset countdown
@@ -929,8 +972,25 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         macd_signal = "BULLISH" if macd["histogram"] > 0 else "BEARISH"
         rsi_str  = f"{rsi:.1f}  —  {rsi_signal}"
         macd_str = f"{macd['histogram']:+.2f}  —  {macd_signal}"
-        indicators_str = f"RSI {rsi:.1f} {rsi_signal}  ·  MACD {macd['histogram']:+.3f} {macd_signal}"
         regime = calculate_market_regime(df)
+
+        # 3b. Macro indicators — DXY + VIX
+        dxy_str = "N/A"
+        vix_str = "N/A"
+        try:
+            from data.fetch import get_macro_indicators
+            macro = get_macro_indicators()
+            if macro.get("dxy"):
+                dxy_str = macro["dxy"]["label"]
+            if macro.get("vix"):
+                vix_str = macro["vix"]["label"]
+        except Exception:
+            pass
+
+        indicators_str = (
+            f"RSI {rsi:.1f} {rsi_signal}  ·  MACD {macd['histogram']:+.3f} {macd_signal}"
+            f"  ·  DXY {dxy_str}  ·  VIX {vix_str}"
+        )
 
         # 4. News
         from news.sentiment import get_gold_news, get_sentiment_summary
@@ -938,36 +998,63 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         sentiment = get_sentiment_summary(headlines)
         news_block = _news_html(headlines, sentiment)
 
-        # 5. THB conversion
+        # 5. THB price — Hua Seng Heng live API (primary) / yfinance conversion (fallback)
+        from data.fetch import get_hsh_price
         from converter.thai import convert_to_thb
-        thb      = convert_to_thb(price_usd)
-        thb_now  = thb["thb_per_baht_weight_thai"]
-        thb_prev = thb_now * (prev_usd / price_usd) if price_usd > 0 else thb_now
-        change   = thb_now - thb_prev
-        rate     = thb["usd_thb_rate"]
-        rate_src = thb["rate_source"]
+        hsh = get_hsh_price()
+        if hsh:
+            # Primary: real Hua Seng Heng price (competition-grade)
+            thb_now  = hsh["sell"]            # price you PAY to buy gold
+            rate     = 0.0                    # not applicable — direct THB quote
+            rate_src = "hsh"
+            # Approximate previous THB price using yfinance USD ratio
+            thb_prev = thb_now * (prev_usd / price_usd) if price_usd > 0 else thb_now
+        else:
+            # Fallback: convert XAUUSD → THB via exchange rate
+            thb      = convert_to_thb(price_usd)
+            thb_now  = thb["thb_per_baht_weight_thai"]
+            thb_prev = thb_now * (prev_usd / price_usd) if price_usd > 0 else thb_now
+            rate     = thb["usd_thb_rate"]
+            rate_src = thb["rate_source"]
+        change = thb_now - thb_prev
 
-        # 6. Claude agent
-        from agent.claude_agent import run_agent
+        # 6. Trading agent
+        from agent.trading_agent import run_agent
         agent      = run_agent()
         decision   = agent.get("decision", "HOLD")
         confidence = agent.get("confidence", 0)
         reasoning  = agent.get("reasoning", "No reasoning.")
 
-        api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
         if not api_key or api_key == "your_key_here":
-            reasoning = ("ANTHROPIC_API_KEY not set.\n"
-                         "Add it to your .env file to enable Claude analysis.")
+            reasoning = ("OPENAI_API_KEY not set.\n"
+                         "Add it to your .env file to enable GPT analysis.")
 
-        # 7. Paper trade execution — ONLY when trade_mode is ON
+        # 7. Paper trade execution — ONLY when trade_mode is ON AND scheduler allows
         from trader.paper_engine import execute_paper_trade, get_portfolio_summary, \
                                         get_trade_history, get_equity_history, get_recent_outcomes
-        if trade_mode:
+        from trader.trade_scheduler import can_trade_now, record_trade
+        if trade_mode and can_trade_now():
             trade_result = execute_paper_trade(decision, confidence, thb_now)
+            if trade_result.get("action") not in ("DISABLED", "SKIP", None):
+                record_trade()
+        elif trade_mode and not can_trade_now():
+            trade_result = {"action": "SKIP", "reason": "Outside trading window"}
         else:
             trade_result = {"action": "DISABLED", "reason": "Trade mode is OFF"}
 
         portfolio    = get_portfolio_summary(thb_now)
+
+        # Inject LLM cost into portfolio for dashboard display
+        try:
+            from logger.cost_tracker import get_cost_summary
+            cost = get_cost_summary()
+            portfolio["llm_cost_thb"] = cost["total_cost_thb"]
+            portfolio["net_budget"]   = cost["budget_remaining"]
+        except Exception:
+            portfolio["llm_cost_thb"] = 0.0
+            portfolio["net_budget"]   = portfolio["initial_balance"]
+
         trades       = get_trade_history(20)
         equity_hist  = get_equity_history()
         outcomes     = get_recent_outcomes(15)
@@ -977,8 +1064,8 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         except Exception:
             eq_chart = None
 
-        # 8. Log analysis
-        from logger.trade_log import log_analysis, get_recent_logs
+        # 8. Log analysis (internal CSV/MongoDB + professor's API)
+        from logger.trade_log import log_analysis, get_recent_logs, send_trade_log
         from risk.metrics import calculate_risk
         risk = calculate_risk(df)
         log_analysis(decision=decision, confidence=confidence,
@@ -986,6 +1073,9 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
                      price_thb=f"฿{thb_now:,.0f}",
                      rsi=rsi_str, macd=macd_str,
                      sharpe=f"{risk['sharpe']:.2f}", reasoning=reasoning)
+        # Send to professor's trade log API (competition requirement)
+        send_trade_log(action=decision, price_thb=thb_now,
+                       reason=reasoning, confidence=confidence)
         log_df = get_recent_logs(50)
 
         # Build HTML blocks
@@ -1011,7 +1101,7 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         outcome_bar  = _outcome_bar_html(outcomes)
         trade_table  = _trade_table_html(trades, portfolio.get("open_position"))
         thai_now     = __import__('datetime').datetime.now(THAI_TZ).strftime("%H:%M:%S")
-        last_updated = f"Last updated: {thai_now} (TH)  ·  auto-refresh every 5 min"
+        last_updated = f"Last updated: {thai_now} (TH)  ·  auto-refresh every 30 min"
         tm_html      = _trade_mode_html(trade_mode)
 
         # Status bar message
@@ -1041,6 +1131,7 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
             indicators_str,
             status,
             tm_html,
+            dxy_str, vix_str,
         )
 
     except Exception as e:
@@ -1080,6 +1171,7 @@ def _error_outputs(msg: str, trade_mode: bool = False) -> tuple:
         "—",
         msg,
         _trade_mode_html(trade_mode),
+        "N/A", "N/A",
     )
 
 
@@ -1088,6 +1180,13 @@ def _error_outputs(msg: str, trade_mode: bool = False) -> tuple:
 # ─────────────────────────────────────────────────────────────
 def build_ui() -> gr.Blocks:
     """Build and return the PNS-style Gradio dashboard."""
+
+    # Restore UI state from last session
+    _saved = _load_ui_state()
+    _init_trade_mode: bool = _saved["trade_mode"]
+    _init_refresh_mode: str = _saved["refresh_mode"]
+    # Apply saved refresh mode to global so countdown starts correctly
+    _set_mode(_init_refresh_mode)
 
     with gr.Blocks(title="Thong Yip Thong Yod") as demo:
 
@@ -1108,7 +1207,7 @@ def build_ui() -> gr.Blocks:
         with gr.Row(visible=DEV_MODE):
             trade_mode_toggle = gr.Checkbox(
                 label="TRADE MODE  —  enable to execute paper trades automatically",
-                value=False,
+                value=_init_trade_mode,
                 scale=3,
             )
             gr.HTML(
@@ -1122,8 +1221,8 @@ def build_ui() -> gr.Blocks:
         with gr.Row(visible=DEV_MODE):
             mode_radio = gr.Radio(
                 choices=["REAL", "TEST"],
-                value="REAL",
-                label="REFRESH MODE  —  REAL = every 5 min  ·  TEST = every 15 sec",
+                value=_init_refresh_mode,
+                label="REFRESH MODE  —  REAL = every 30 min  ·  TEST = every 15 sec",
                 interactive=True,
                 scale=3,
             )
@@ -1172,6 +1271,10 @@ def build_ui() -> gr.Blocks:
                 with gr.Row():
                     rsi_box  = gr.Textbox(label="RSI (14)", interactive=False)
                     macd_box = gr.Textbox(label="MACD Histogram", interactive=False)
+                gr.Markdown("## MACRO")
+                with gr.Row():
+                    dxy_box  = gr.Textbox(label="DXY  —  US Dollar Index  (↑ bearish gold  ·  ↓ bullish gold)", interactive=False)
+                    vix_box  = gr.Textbox(label="VIX  —  Fear Index  (>20 bullish gold  ·  <15 neutral)", interactive=False)
 
             with gr.Tab("Portfolio"):
                 portfolio_html = gr.HTML()
@@ -1216,9 +1319,9 @@ def build_ui() -> gr.Blocks:
                 gr.HTML(
                     '<div style="font-family:Courier New,monospace; color:#555; '
                     'font-size:0.75em; padding:8px 0; letter-spacing:0.08em;">'
-                    'Replay 20 days of historical XAUUSD data through the Claude agent.  '
+                    'Replay 20 days of historical XAUUSD data through the trading agent.  '
                     'Uses embedded CSV data — no live API needed for price.  '
-                    'Each run costs ~20 Claude Sonnet calls.'
+                    'Each run costs ~20 GPT-4o-mini calls.'
                     '</div>'
                 )
                 bt_run_btn      = gr.Button("▶  RUN BACKTEST", variant="primary", size="sm")
@@ -1237,7 +1340,7 @@ def build_ui() -> gr.Blocks:
         # ── Hidden indicators passthrough ────────────────────
         indicators_hidden = gr.Textbox(visible=False)
 
-        # ── Output order (16 outputs) ────────────────────────
+        # ── Output order (18 outputs) ────────────────────────
         outputs = [
             price_html, decision_html,
             last_updated,
@@ -1251,6 +1354,7 @@ def build_ui() -> gr.Blocks:
             indicators_hidden,
             status_box,
             trade_mode_status,
+            dxy_box, vix_box,
         ]
 
         # ── Wire up refresh button, page load, and timer ─────
@@ -1283,7 +1387,7 @@ def build_ui() -> gr.Blocks:
             return list(run_full_analysis(trade_mode))
 
         try:
-            real_timer = gr.Timer(value=300)
+            real_timer = gr.Timer(value=1800)  # 30 minutes
             real_timer.tick(fn=_run_if_real, inputs=[trade_mode_toggle], outputs=outputs)
 
             test_timer = gr.Timer(value=15)
@@ -1291,9 +1395,9 @@ def build_ui() -> gr.Blocks:
         except Exception as e:
             print(f"[dashboard] gr.Timer not available ({e}); auto-refresh disabled.")
 
-        # Countdown ticker — fires every 1 second, very lightweight
+        # Countdown ticker — fires every 30 seconds (was 1s; 1s caused Render WebSocket congestion)
         try:
-            countdown_timer = gr.Timer(value=1)
+            countdown_timer = gr.Timer(value=30)
             countdown_timer.tick(
                 fn=_tick_countdown,
                 inputs=[],
@@ -1302,9 +1406,21 @@ def build_ui() -> gr.Blocks:
         except Exception as e:
             print(f"[dashboard] Countdown timer not available ({e})")
 
-        # Toggle change instantly refreshes the banner + dims/lights decision
+        # Toggle change: notify background scheduler + refresh UI
+        def _on_trade_mode_change(enabled: bool):
+            # Persist so the toggle survives page refresh
+            _save_ui_state(trade_mode=enabled)
+            # Update the background scheduler flag so trades fire
+            # even when no browser tab is open.
+            try:
+                from main import set_trade_mode
+                set_trade_mode(enabled)
+            except Exception:
+                pass  # non-critical if called outside main.py context
+            return run_full_analysis(enabled)
+
         trade_mode_toggle.change(
-            fn=run_full_analysis,
+            fn=_on_trade_mode_change,
             inputs=[trade_mode_toggle],
             outputs=outputs,
         )
