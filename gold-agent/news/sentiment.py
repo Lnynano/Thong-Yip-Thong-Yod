@@ -172,6 +172,14 @@ def get_sentiment_summary(headlines: list[str]) -> str:
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
+
+        # Track LLM cost
+        try:
+            from logger.cost_tracker import track_usage
+            track_usage(response.usage, source="sentiment")
+        except Exception:
+            pass
+
         raw = response.choices[0].message.content.strip() if response.choices else ""
         if not raw:
             print("[sentiment.py] Empty response from GPT — falling back to keywords.")

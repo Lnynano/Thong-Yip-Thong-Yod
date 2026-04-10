@@ -595,6 +595,13 @@ def run_agent() -> dict:
                 messages=messages,
             )
 
+            # Track LLM cost
+            try:
+                from logger.cost_tracker import track_usage
+                track_usage(response.usage, source="trading_agent")
+            except Exception:
+                pass
+
             msg = response.choices[0].message
             finish_reason = response.choices[0].finish_reason
 

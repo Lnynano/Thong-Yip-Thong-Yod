@@ -87,6 +87,14 @@ async def _llm_func(prompt, system_prompt=None, history_messages=None, **kwargs)
         temperature=0,
         messages=messages,
     )
+
+    # Track LLM cost
+    try:
+        from logger.cost_tracker import track_usage
+        track_usage(response.usage, source="lightrag")
+    except Exception:
+        pass
+
     return response.choices[0].message.content
 
 
