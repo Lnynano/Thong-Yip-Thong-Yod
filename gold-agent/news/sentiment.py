@@ -4,7 +4,7 @@ Fetches gold-related news headlines from NewsAPI.
 Falls back to a rotating pool of mock headlines if the API key is missing,
 so the app always shows different headlines each refresh.
 
-Sentiment scoring uses Claude Haiku for nuanced analysis.
+Sentiment scoring uses GPT-4o-mini for nuanced analysis.
 Falls back to keyword counting if the API call fails.
 """
 
@@ -14,7 +14,7 @@ import random
 import hashlib
 import time
 
-import anthropic
+from openai import OpenAI
 import requests
 from dotenv import load_dotenv
 
@@ -134,9 +134,9 @@ def _keyword_sentiment(headlines: list[str]) -> str:
 
 def get_sentiment_summary(headlines: list[str]) -> str:
     """
-    Score gold news sentiment using Claude Haiku.
+    Score gold news sentiment using GPT-4o-mini.
 
-    Sends headlines to Claude Haiku (temperature=0) and asks for a JSON
+    Sends headlines to GPT-4o-mini (temperature=0) and asks for a JSON
     sentiment label. Falls back to keyword counting if the API key is
     missing or the call fails.
 
@@ -154,37 +154,45 @@ def get_sentiment_summary(headlines: list[str]) -> str:
         print(f"[sentiment.py] Cache hit → {_sentiment_cache['value']} (saved 1 Haiku call)")
         return _sentiment_cache["value"]
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return _keyword_sentiment(headlines)
 
     try:
-        client = anthropic.Anthropic()
+        client = OpenAI(api_key=api_key)
         headlines_text = "\n".join(f"- {h}" for h in headlines)
         prompt = (
             f"Analyze these gold market news headlines:\n{headlines_text}\n\n"
             "Return JSON only, no other text: "
             '{"sentiment": "BULLISH" or "BEARISH" or "NEUTRAL", "reasoning": "<1 sentence>"}'
         )
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
             max_tokens=100,
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = response.content[0].text.strip() if response.content else ""
+
+        # Track LLM cost
+        try:
+            from logger.cost_tracker import track_usage
+            track_usage(response.usage, source="sentiment")
+        except Exception:
+            pass
+
+        raw = response.choices[0].message.content.strip() if response.choices else ""
         if not raw:
-            print("[sentiment.py] Empty response from Claude — falling back to keywords.")
+            print("[sentiment.py] Empty response from GPT — falling back to keywords.")
             result = _keyword_sentiment(headlines)
             _sentiment_cache.update({"key": cache_key, "value": result, "ts": now})
             return result
-        # Extract JSON even if Claude wraps it in markdown code fences
+        # Extract JSON even if the model wraps it in markdown code fences
         start = raw.find("{")
         end   = raw.rfind("}") + 1
         data = json.loads(raw[start:end] if start != -1 else raw)
         label = data.get("sentiment", "").upper()
         if label in ("BULLISH", "BEARISH", "NEUTRAL"):
-            print(f"[sentiment.py] Claude sentiment: {label}")
+            print(f"[sentiment.py] GPT sentiment: {label}")
             _sentiment_cache.update({"key": cache_key, "value": label, "ts": now})
             return label
         result = _keyword_sentiment(headlines)
@@ -192,7 +200,7 @@ def get_sentiment_summary(headlines: list[str]) -> str:
         return result
 
     except Exception as e:
-        print(f"[sentiment.py] Claude sentiment failed ({e}). Falling back to keywords.")
+        print(f"[sentiment.py] GPT sentiment failed ({e}). Falling back to keywords.")
         return _keyword_sentiment(headlines)
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 backtest.py
-Replay historical OHLCV data candle-by-candle through the Claude gold agent.
+Replay historical OHLCV data candle-by-candle through the gold trading agent.
 
 Usage:
     cd gold-agent
@@ -16,7 +16,7 @@ Notes:
     - Starts from candle 20 (minimum for Bollinger Bands to be valid)
     - Uses a fixed USD/THB rate of 34.5 for consistent conversion
     - News uses mock headlines (not real historical news)
-    - Each candle makes 1 Claude API call — use BACKTEST_MAX_CANDLES env var
+    - Each candle makes 1 API call — use BACKTEST_MAX_CANDLES env var
       to cap the run (default 50 candles) and keep API costs reasonable
 """
 
@@ -28,18 +28,51 @@ from unittest.mock import patch
 # ── Path setup ───────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-USD_THB_RATE        = 34.5      # fixed rate for consistent backtesting
-TROY_OZ_GRAMS       = 31.1035
-BAHT_WEIGHT_GRAMS   = 15.244
-PURITY              = 0.965
-INITIAL_BALANCE_THB = 1500.0
-CONFIDENCE_GATE     = 65
-MIN_BALANCE_THB     = 1000.0
-POSITION_SIZE_PCT   = 0.95
-MIN_ROWS            = 20        # need 20 rows for Bollinger Bands(20)
+# ── Load .env so BACKTEST_MAX_CANDLES and other vars are available ────────────
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:
+    pass  # python-dotenv not installed — rely on shell environment
+
+# ── Constants — pulled from paper_engine.py to stay in sync ──────────────────
+# Pull trading rules directly from paper_engine so backtest always matches live
+try:
+    from trader.paper_engine import (
+        CONF_THRESHOLD   as CONFIDENCE_GATE,
+        TAKE_PROFIT_PCT,
+        STOP_LOSS_PCT,
+        COOLDOWN_ROUNDS,
+        TRADE_FEE_PCT,
+        TRADE_FEE_FLAT_THB,
+        DEFAULT_BALANCE  as INITIAL_BALANCE_THB,
+        MIN_TRADE_THB    as MIN_BALANCE_THB,
+    )
+    POSITION_SIZE_PCT = 0.95   # matches paper_engine open logic (gross = balance * 0.95)
+    print("[backtest] Loaded trading rules from paper_engine.py")
+except ImportError:
+    # Fallback if paper_engine can't be imported
+    CONFIDENCE_GATE    = 65
+    TAKE_PROFIT_PCT    = 0.015
+    STOP_LOSS_PCT      = -0.010
+    COOLDOWN_ROUNDS    = 2
+    TRADE_FEE_PCT      = float(os.environ.get("TRADE_FEE_PCT", "0.005"))
+    TRADE_FEE_FLAT_THB = float(os.environ.get("TRADE_FEE_FLAT_THB", "0"))
+    INITIAL_BALANCE_THB = 1500.0
+    MIN_BALANCE_THB    = 1000.0
+    POSITION_SIZE_PCT  = 0.95
+    print("[backtest] WARNING: could not import paper_engine — using fallback constants")
+
+from converter.thai import THAI_GOLD_PURITY
+
+USD_THB_RATE      = float(os.environ.get("USD_THB_RATE", "34.5"))  # env var, not hardcoded
+TROY_OZ_GRAMS     = 31.1035
+BAHT_WEIGHT_GRAMS = 15.244
+PURITY            = THAI_GOLD_PURITY  # single source of truth
+MIN_ROWS          = 20      # need 20 rows for Bollinger Bands(20)
+
 # Cap candles to run so API costs stay predictable (override with env var)
-MAX_CANDLES         = int(os.environ.get("BACKTEST_MAX_CANDLES", "50"))
+MAX_CANDLES = int(os.environ.get("BACKTEST_MAX_CANDLES", "50"))
 
 
 def usd_to_thb_per_bw(price_usd: float) -> float:
@@ -48,6 +81,11 @@ def usd_to_thb_per_bw(price_usd: float) -> float:
     thb_per_gram  = thb_per_oz / TROY_OZ_GRAMS
     thb_per_bw    = thb_per_gram * BAHT_WEIGHT_GRAMS * PURITY
     return round(thb_per_bw, 2)
+
+
+def _calc_fee(trade_value_thb: float) -> float:
+    """Calculate total fee for a single transaction."""
+    return round(trade_value_thb * TRADE_FEE_PCT + TRADE_FEE_FLAT_THB, 2)
 
 
 def run_backtest() -> dict:
@@ -121,8 +159,10 @@ def run_backtest() -> dict:
     print(f"  Data  : {df_full.index[0]}  →  {df_full.index[-1]}")
     print(f"  Candles  : {len(df_full)}  |  Live candles: {len(df_full) - MIN_ROWS}")
     print(f"  Start : candle {MIN_ROWS} (Bollinger Bands require {MIN_ROWS} rows)")
-    print(f"  Rate  : USD/THB = {USD_THB_RATE} (fixed)")
+    print(f"  Rate  : USD/THB = {USD_THB_RATE} (from env USD_THB_RATE)")
     print(f"  Capital: ฿{INITIAL_BALANCE_THB:,.0f}  |  Gate: {CONFIDENCE_GATE}% confidence")
+    print(f"  TP: +{TAKE_PROFIT_PCT*100:.1f}%  |  SL: {STOP_LOSS_PCT*100:.1f}%  |  Cooldown: {COOLDOWN_ROUNDS} rounds")
+    print(f"  Fees  : {TRADE_FEE_PCT*100:.2f}% per trade + ฿{TRADE_FEE_FLAT_THB:.0f} flat")
     print("=" * 65)
 
     # ── Paper trading state (in-memory, no portfolio.json touched) ────────────
@@ -130,9 +170,10 @@ def run_backtest() -> dict:
     open_position  = None
     closed_trades  = []
     daily_log      = []
+    cooldown       = 0   # rounds before next BUY allowed (mirrors paper_engine)
 
     import data.fetch as fetch_module
-    from agent.claude_agent import run_agent
+    from agent.trading_agent import run_agent
 
     for i in range(MIN_ROWS - 1, len(df_full)):
         window     = df_full.iloc[: i + 1].copy()
@@ -141,7 +182,8 @@ def run_backtest() -> dict:
         price_thb  = usd_to_thb_per_bw(price_usd)
 
         print(f"\n{'─'*65}")
-        print(f"  Candle {i+1:3d} | {date} | ${price_usd:,.2f} | ฿{price_thb:,.0f}/bw")
+        print(f"  Candle {i+1:3d} | {date} | ${price_usd:,.2f} | ฿{price_thb:,.0f}/bw"
+              + (f"  [cooldown {cooldown}]" if cooldown > 0 else ""))
         print(f"{'─'*65}")
 
         with patch.object(fetch_module, "get_gold_price", return_value=window):
@@ -160,48 +202,94 @@ def run_backtest() -> dict:
         action  = "HOLD"
         pnl_thb = 0.0
 
-        if decision == "BUY" and confidence >= CONFIDENCE_GATE:
-            if open_position is None:
-                if balance_thb >= MIN_BALANCE_THB:
-                    cost    = round(balance_thb * POSITION_SIZE_PCT, 2)
-                    size_bw = cost / price_thb
-                    balance_thb   -= cost
-                    open_position  = {
-                        "entry_date"  : str(date.date()),
-                        "entry_price" : price_thb,
-                        "size_bw"     : size_bw,
-                        "cost_thb"    : cost,
-                    }
-                    action = "OPENED"
-                    print(f"  >> BUY executed  | cost ฿{cost:,.2f} | size {size_bw:.6f} bw")
-                else:
-                    action = "SKIP (low balance)"
-            else:
-                action = "SKIP (already holding)"
+        # ── Step 1: Auto TP/SL — mirrors paper_engine exactly ────────────────
+        if open_position is not None:
+            change_pct = (price_thb - open_position["entry_price"]) / open_position["entry_price"]
+            if change_pct >= TAKE_PROFIT_PCT:
+                decision   = "SELL"
+                confidence = 100
+                print(f"  ** TAKE PROFIT triggered at {change_pct*100:+.2f}% (>= +{TAKE_PROFIT_PCT*100:.1f}%)")
+            elif change_pct <= STOP_LOSS_PCT:
+                decision   = "SELL"
+                confidence = 100
+                print(f"  ** STOP LOSS triggered at {change_pct*100:+.2f}% (<= {STOP_LOSS_PCT*100:.1f}%)")
 
-        elif decision == "SELL" and confidence >= CONFIDENCE_GATE:
-            if open_position is not None:
-                proceeds = open_position["size_bw"] * price_thb
-                pnl_thb  = round(proceeds - open_position["cost_thb"], 2)
-                outcome  = "WIN" if pnl_thb >= 0 else "LOSS"
-                balance_thb += proceeds
-                trade = {
-                    "entry_date"  : open_position["entry_date"],
-                    "exit_date"   : str(date.date()),
-                    "entry_price" : open_position["entry_price"],
-                    "exit_price"  : price_thb,
-                    "size_bw"     : open_position["size_bw"],
-                    "cost_thb"    : open_position["cost_thb"],
-                    "pnl_thb"     : pnl_thb,
-                    "pnl_pct"     : round(pnl_thb / open_position["cost_thb"] * 100, 2),
-                    "outcome"     : outcome,
+        # ── Step 2: Confidence gate ───────────────────────────────────────────
+        if confidence < CONFIDENCE_GATE:
+            action = f"SKIP (confidence {confidence}% < {CONFIDENCE_GATE}%)"
+            # tick down cooldown on skip too
+            if cooldown > 0:
+                cooldown -= 1
+
+        # ── Step 3: Cooldown check (BUY only) ────────────────────────────────
+        elif cooldown > 0 and decision == "BUY":
+            action   = f"SKIP (cooldown {cooldown} rounds remaining)"
+            cooldown -= 1
+            print(f"  Cooldown: {cooldown} rounds remaining after this")
+
+        # ── Step 4: BUY — open long ───────────────────────────────────────────
+        elif decision == "BUY" and open_position is None:
+            if balance_thb >= MIN_BALANCE_THB:
+                gross    = round(balance_thb * POSITION_SIZE_PCT, 2)
+                open_fee = _calc_fee(gross)
+                cost     = round(gross + open_fee, 2)
+                size_bw  = gross / price_thb
+                balance_thb  -= cost
+                open_position = {
+                    "entry_date"  : str(date.date()),
+                    "entry_price" : price_thb,
+                    "size_bw"     : size_bw,
+                    "cost_thb"    : gross,
+                    "open_fee"    : open_fee,
+                    "tp_price"    : round(price_thb * (1 + TAKE_PROFIT_PCT), 0),
+                    "sl_price"    : round(price_thb * (1 + STOP_LOSS_PCT), 0),
                 }
-                closed_trades.append(trade)
-                open_position = None
-                action = f"CLOSED [{outcome}]"
-                print(f"  >> SELL executed | proceeds ฿{proceeds:,.2f} | P&L {pnl_thb:+.2f} [{outcome}]")
+                cooldown = 0
+                action   = "OPENED"
+                print(f"  >> BUY executed  | gross ฿{gross:,.2f} | fee ฿{open_fee:.2f} | size {size_bw:.6f} bw")
+                print(f"     TP @ ฿{open_position['tp_price']:,.0f}  |  SL @ ฿{open_position['sl_price']:,.0f}")
             else:
-                action = "SKIP (no position)"
+                action = f"SKIP (balance ฿{balance_thb:.0f} < min ฿{MIN_BALANCE_THB:.0f})"
+
+        elif decision == "BUY" and open_position is not None:
+            action = "SKIP (already holding)"
+
+        # ── Step 5: SELL — close long ─────────────────────────────────────────
+        elif decision == "SELL" and open_position is not None:
+            gross_proceeds = open_position["size_bw"] * price_thb
+            close_fee      = _calc_fee(gross_proceeds)
+            open_fee       = open_position.get("open_fee", 0.0)
+            net_proceeds   = round(gross_proceeds - close_fee, 2)
+            total_fees     = round(open_fee + close_fee, 2)
+            pnl_thb        = round(net_proceeds - open_position["cost_thb"], 2)
+            pnl_pct        = round(pnl_thb / open_position["cost_thb"] * 100, 2)
+            outcome        = "WIN" if pnl_thb >= 0 else "LOSS"
+            balance_thb   += net_proceeds
+            trade = {
+                "entry_date"  : open_position["entry_date"],
+                "exit_date"   : str(date.date()),
+                "entry_price" : open_position["entry_price"],
+                "exit_price"  : price_thb,
+                "size_bw"     : open_position["size_bw"],
+                "cost_thb"    : open_position["cost_thb"],
+                "open_fee"    : open_fee,
+                "close_fee"   : close_fee,
+                "total_fees"  : total_fees,
+                "pnl_thb"     : pnl_thb,
+                "pnl_pct"     : pnl_pct,
+                "outcome"     : outcome,
+            }
+            closed_trades.append(trade)
+            open_position = None
+            cooldown      = COOLDOWN_ROUNDS   # start cooldown after close
+            action        = f"CLOSED [{outcome}]"
+            print(f"  >> SELL executed | net ฿{net_proceeds:,.2f} | fee ฿{total_fees:.2f} | P&L {pnl_thb:+.2f} ({pnl_pct:+.2f}%) [{outcome}]")
+            print(f"     Cooldown started: {COOLDOWN_ROUNDS} rounds")
+
+        elif decision == "SELL" and open_position is None:
+            action = "SKIP (no position to sell)"
+            if cooldown > 0:
+                cooldown -= 1
 
         unrealized = 0.0
         if open_position:
@@ -228,34 +316,72 @@ def run_backtest() -> dict:
     if open_position:
         final_equity += open_position["size_bw"] * last_price_thb
 
-    wins      = [t for t in closed_trades if t["outcome"] == "WIN"]
-    losses    = [t for t in closed_trades if t["outcome"] == "LOSS"]
-    total_pnl = sum(t["pnl_thb"] for t in closed_trades)
-    win_rate  = len(wins) / len(closed_trades) * 100 if closed_trades else 0.0
-    ret_pct   = (final_equity - INITIAL_BALANCE_THB) / INITIAL_BALANCE_THB * 100
+    wins       = [t for t in closed_trades if t["outcome"] == "WIN"]
+    losses     = [t for t in closed_trades if t["outcome"] == "LOSS"]
+    total_pnl  = sum(t["pnl_thb"] for t in closed_trades)
+    total_fees = sum(t.get("total_fees", 0.0) for t in closed_trades)
+    win_rate   = len(wins) / len(closed_trades) * 100 if closed_trades else 0.0
+    ret_pct    = (final_equity - INITIAL_BALANCE_THB) / INITIAL_BALANCE_THB * 100
+
+    # Derive actual calendar days from date range
+    candles_run   = len(daily_log)
+    if daily_log:
+        from datetime import datetime
+        try:
+            d0 = datetime.strptime(daily_log[0]["date"], "%Y-%m-%d")
+            d1 = datetime.strptime(daily_log[-1]["date"], "%Y-%m-%d")
+            calendar_days = (d1 - d0).days + 1
+        except Exception:
+            calendar_days = candles_run
+    else:
+        calendar_days = 0
+
+    avg_win  = sum(t["pnl_thb"] for t in wins)   / len(wins)   if wins   else 0.0
+    avg_loss = abs(sum(t["pnl_thb"] for t in losses)) / len(losses) if losses else 0.0
+    rr_ratio = round(avg_win / avg_loss, 2) if avg_loss > 0 else 0.0
 
     summary = {
         "period_start"  : daily_log[0]["date"] if daily_log else "—",
         "period_end"    : daily_log[-1]["date"] if daily_log else "—",
-        "days_run"      : len(daily_log),
+        "candles_run"   : candles_run,
+        "calendar_days" : calendar_days,
+        "interval"      : interval_used,
+        "days_run"      : candles_run,   # kept for dashboard compatibility
         "total_trades"  : len(closed_trades),
         "wins"          : len(wins),
         "losses"        : len(losses),
         "win_rate"      : round(win_rate, 1),
         "total_pnl"     : round(total_pnl, 2),
+        "total_fees"    : round(total_fees, 2),
         "initial"       : INITIAL_BALANCE_THB,
         "final_equity"  : round(final_equity, 2),
         "return_pct"    : round(ret_pct, 2),
+        "avg_win"       : round(avg_win, 2),
+        "avg_loss"      : round(avg_loss, 2),
+        "rr_ratio"      : rr_ratio,
+        # Rules used — for transparency in results
+        "rules"         : {
+            "confidence_gate" : CONFIDENCE_GATE,
+            "take_profit_pct" : TAKE_PROFIT_PCT * 100,
+            "stop_loss_pct"   : STOP_LOSS_PCT   * 100,
+            "cooldown_rounds" : COOLDOWN_ROUNDS,
+            "fee_pct"         : TRADE_FEE_PCT   * 100,
+            "position_size"   : POSITION_SIZE_PCT * 100,
+            "usd_thb_rate"    : USD_THB_RATE,
+        },
     }
 
     print(f"\n{'='*65}")
-    print("  BACKTEST RESULTS")
+    print("  BACKTEST RESULTS  (rules match live paper_engine.py)")
     print(f"{'='*65}")
-    print(f"  Period       : {summary['period_start']} → {summary['period_end']}")
-    print(f"  Days run     : {summary['days_run']}")
+    print(f"  Period       : {summary['period_start']} → {summary['period_end']}  ({calendar_days} calendar days)")
+    print(f"  Candles run  : {candles_run} x {interval_used} bars")
+    print(f"  Rules        : gate={CONFIDENCE_GATE}%  TP=+{TAKE_PROFIT_PCT*100:.1f}%  SL={STOP_LOSS_PCT*100:.1f}%  cooldown={COOLDOWN_ROUNDS}")
     print(f"  Closed trades: {summary['total_trades']}  (wins {summary['wins']}  losses {summary['losses']})")
     print(f"  Win rate     : {summary['win_rate']:.1f}%")
-    print(f"  Total P&L    : ฿{summary['total_pnl']:+,.2f}")
+    print(f"  Avg win      : ฿{avg_win:+.2f}  |  Avg loss : ฿{avg_loss:.2f}  |  R:R {rr_ratio:.2f}")
+    print(f"  Total fees   : ฿{summary['total_fees']:,.2f}")
+    print(f"  Total P&L    : ฿{summary['total_pnl']:+,.2f}  (net of fees)")
     print(f"  Initial      : ฿{summary['initial']:,.2f}")
     print(f"  Final equity : ฿{summary['final_equity']:,.2f}")
     print(f"  Return       : {summary['return_pct']:+.2f}%")

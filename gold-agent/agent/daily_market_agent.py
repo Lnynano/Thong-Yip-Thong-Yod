@@ -4,7 +4,7 @@ Daily macro market context agent — runs once per day, caches result.
 
 Analyzes 90-day gold price data + recent news to produce a daily market bias
 (Uptrend / Downtrend / Sideways) and trend strength. This context is injected
-into the main ReAct agent's get_indicators tool result so Claude has a macro
+into the main ReAct agent's get_indicators tool result so the agent has a macro
 view without needing extra API calls every 5 minutes.
 
 Storage strategy (auto-detected):
@@ -12,7 +12,7 @@ Storage strategy (auto-detected):
   - Not set          →  local data/daily_market.json
 
 Cache TTL: 1 day — re-runs automatically after midnight Thai time.
-Model: claude-haiku (cheap, fast, sufficient for trend summary)
+Model: gpt-4o-mini (cheap, fast, sufficient for trend summary)
 """
 
 import json
@@ -97,14 +97,14 @@ def _is_cache_valid(cache: dict) -> bool:
 # Analysis
 # ─────────────────────────────────────────────────────────────
 def _run_analysis() -> dict:
-    """Call Claude Haiku to analyze macro gold trend for today."""
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    """Call GPT-4o-mini to analyze macro gold trend for today."""
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         print("[daily_market_agent.py] No API key — skipping analysis.")
         return _DEFAULT
 
     try:
-        import anthropic
+        from openai import OpenAI
         from data.fetch import get_gold_price
         from news.sentiment import get_gold_news
 
@@ -135,14 +135,22 @@ Return JSON only, no other text:
   "daily_summary":  "<2 sentences: current market state and key driver>"
 }}"""
 
-        client   = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model      = "claude-haiku-4-5-20251001",
+        client   = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model      = "gpt-4o-mini",
             max_tokens = 256,
             temperature= 0,
             messages   = [{"role": "user", "content": prompt}],
         )
-        text   = response.content[0].text.strip()
+
+        # Track LLM cost
+        try:
+            from logger.cost_tracker import track_usage
+            track_usage(response.usage, source="daily_market")
+        except Exception:
+            pass
+
+        text   = response.choices[0].message.content.strip()
         start  = text.find("{")
         end    = text.rfind("}") + 1
         result = json.loads(text[start:end])
@@ -158,12 +166,16 @@ Return JSON only, no other text:
 # ─────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────
+_analysis_in_progress = False
+
+
 def get_daily_market() -> dict:
     """
     Return today's macro market context.
 
     Uses cached result if already generated today (Thai date).
     Re-runs analysis if cache is stale (new day).
+    Prevents concurrent analysis via in-progress flag.
 
     Returns:
         dict: {
@@ -174,15 +186,25 @@ def get_daily_market() -> dict:
             "generated_date" : "YYYY-MM-DD",
         }
     """
+    global _analysis_in_progress
     cache = _load_cache()
     if _is_cache_valid(cache):
-        print(f"[daily_market_agent.py] Cache hit → {cache.get('daily_trend')} / {cache.get('trend_strength')}")
+        print(f"[daily_market_agent.py] Cache hit -> {cache.get('daily_trend')} / {cache.get('trend_strength')}")
         return cache
 
+    # Prevent duplicate API calls if two refreshes fire at the same time
+    if _analysis_in_progress:
+        print("[daily_market_agent.py] Analysis already running — returning stale cache")
+        return cache or _DEFAULT
+
     print("[daily_market_agent.py] Cache stale — running daily analysis...")
-    result = _run_analysis()
-    _save_cache(result)
-    return result
+    _analysis_in_progress = True
+    try:
+        result = _run_analysis()
+        _save_cache(result)
+        return result
+    finally:
+        _analysis_in_progress = False
 
 
 if __name__ == "__main__":

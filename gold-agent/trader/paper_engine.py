@@ -33,7 +33,14 @@ CONF_THRESHOLD  = 65
 # ── Risk management constants ─────────────────────────────────
 TAKE_PROFIT_PCT = 0.015   # +1.5% → auto SELL (lock profit)
 STOP_LOSS_PCT   = -0.010  # -1.0% → auto SELL (cut loss)
-COOLDOWN_ROUNDS = 2       # rounds to skip after closing a trade
+COOLDOWN_ROUNDS = 0       # disabled — 30-min interval + 65% confidence gate is sufficient protection
+
+# ── Trading fee constants (loaded from env) ───────────────────
+# Applied on every transaction (both open and close).
+# TRADE_FEE_PCT      : percentage of trade value (e.g. 0.005 = 0.5% spread)
+# TRADE_FEE_FLAT_THB : flat fee in THB per transaction (e.g. 15 THB)
+TRADE_FEE_PCT      = float(os.getenv("TRADE_FEE_PCT", "0.005"))
+TRADE_FEE_FLAT_THB = float(os.getenv("TRADE_FEE_FLAT_THB", "0"))
 
 # ─────────────────────────────────────────────────────────────
 # MongoDB client (lazy init — only when MONGODB_URI is set)
@@ -137,6 +144,11 @@ def _record_equity(state: dict, price_thb: float) -> None:
 # ─────────────────────────────────────────────────────────────
 # Core trading logic
 # ─────────────────────────────────────────────────────────────
+def _calc_fee(trade_value_thb: float) -> float:
+    """Calculate total fee for a single transaction (open or close)."""
+    return round(trade_value_thb * TRADE_FEE_PCT + TRADE_FEE_FLAT_THB, 2)
+
+
 def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dict:
     """
     Evaluate the agent decision and simulate a trade if conditions are met.
@@ -146,9 +158,15 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
       SELL + conf >= 65% + open position     ->  CLOSE long (realise P&L)
       anything else                          ->  skip / hold
 
+    Fees (from env):
+      TRADE_FEE_PCT      : % of trade value charged per transaction
+      TRADE_FEE_FLAT_THB : flat THB fee per transaction
+      Total fee = trade_value × TRADE_FEE_PCT + TRADE_FEE_FLAT_THB
+      Applied on both open and close. P&L is always net of fees.
+
     Args:
         decision   : "BUY", "SELL", or "HOLD"
-        confidence : 0-100 from Claude
+        confidence : 0-100 from the agent
         price_thb  : current gold price THB per baht-weight (96.5% purity)
 
     Returns:
@@ -161,7 +179,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
 
     now = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
-    # ── Auto TP/SL check (overrides Claude decision) ─────────
+    # ── Auto TP/SL check (overrides agent decision) ─────────
     pos = state["open_position"]
     if pos is not None:
         change_pct = (price_thb - pos["entry_price"]) / pos["entry_price"]
@@ -194,34 +212,43 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
             return {"action": "SKIP",
                     "reason": f"Balance {available:.0f} THB < minimum {MIN_TRADE_THB:.0f} THB"}
 
-        cost    = available * 0.95
-        size_bw = cost / price_thb
+        gross   = available * 0.95          # 95% of balance allocated
+        fee     = _calc_fee(gross)          # fee on open
+        cost    = round(gross + fee, 2)     # total deducted from balance
+        size_bw = gross / price_thb         # gold bought with gross amount (fee is overhead)
+
         state["balance"]       -= cost
         state["open_position"]  = {
             "direction":   "BUY",
             "entry_price": price_thb,
             "size_bw":     round(size_bw, 6),
-            "cost_thb":    round(cost, 2),
+            "cost_thb":    round(gross, 2),  # gross cost (excluding fee) for P&L base
+            "open_fee":    fee,
             "entry_time":  now,
         }
         state["cooldown"] = 0
         _record_equity(state, price_thb)
         _save(state)
         print(f"[paper_engine.py] OPENED  {size_bw:.5f} bw @ {price_thb:,.0f} THB  "
+              f"fee={fee:.2f} THB  "
               f"TP={price_thb*(1+TAKE_PROFIT_PCT):,.0f}  SL={price_thb*(1+STOP_LOSS_PCT):,.0f}")
         return {"action": "OPENED", "size_bw": size_bw,
-                "price_thb": price_thb, "cost_thb": cost,
+                "price_thb": price_thb, "cost_thb": gross, "fee_thb": fee,
                 "tp_price": round(price_thb * (1 + TAKE_PROFIT_PCT), 0),
                 "sl_price": round(price_thb * (1 + STOP_LOSS_PCT), 0)}
 
     # ── Close long ───────────────────────────────────────────
     if decision == "SELL" and state["open_position"] is not None:
-        pos      = state["open_position"]
-        proceeds = pos["size_bw"] * price_thb
-        pnl      = proceeds - pos["cost_thb"]
-        pnl_pct  = pnl / pos["cost_thb"] * 100
+        pos          = state["open_position"]
+        gross_proceeds = pos["size_bw"] * price_thb
+        close_fee    = _calc_fee(gross_proceeds)              # fee on close
+        open_fee     = pos.get("open_fee", 0.0)
+        net_proceeds = round(gross_proceeds - close_fee, 2)  # actually received
+        total_fees   = round(open_fee + close_fee, 2)
+        pnl          = net_proceeds - pos["cost_thb"]        # net of ALL fees
+        pnl_pct      = pnl / pos["cost_thb"] * 100
 
-        state["balance"] += proceeds
+        state["balance"] = max(0.0, state["balance"] + net_proceeds)  # floor at 0
         trade = {
             "entry_time":  pos["entry_time"],
             "exit_time":   now,
@@ -229,6 +256,9 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
             "exit_price":  price_thb,
             "size_bw":     pos["size_bw"],
             "cost_thb":    pos["cost_thb"],
+            "open_fee":    open_fee,
+            "close_fee":   close_fee,
+            "total_fees":  total_fees,
             "pnl_thb":     round(pnl, 2),
             "pnl_pct":     round(pnl_pct, 2),
             "outcome":     "WIN" if pnl >= 0 else "LOSS",
@@ -240,9 +270,10 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
         _save(state)
         print(f"[paper_engine.py] CLOSED  {trade['outcome']}  "
               f"P&L {pnl:+.2f} THB ({pnl_pct:+.2f}%)  "
-              f"cooldown={COOLDOWN_ROUNDS} rounds")
+              f"fees={total_fees:.2f} THB  cooldown={COOLDOWN_ROUNDS} rounds")
         return {"action": "CLOSED", "pnl_thb": pnl,
-                "pnl_pct": pnl_pct, "outcome": trade["outcome"], "trade": trade}
+                "pnl_pct": pnl_pct, "outcome": trade["outcome"],
+                "total_fees": total_fees, "trade": trade}
 
     if decision == "BUY" and state["open_position"] is not None:
         return {"action": "SKIP", "reason": "Already holding a position"}
@@ -273,6 +304,7 @@ def get_portfolio_summary(current_price_thb: float = 0.0) -> dict:
     losses = [t for t in closed if t["outcome"] == "LOSS"]
 
     realized_pnl = sum(t["pnl_thb"] for t in closed)
+    total_fees   = sum(t.get("total_fees", 0.0) for t in closed)
     win_rate     = len(wins) / len(closed) if closed else 0.0
     avg_win      = sum(t["pnl_thb"] for t in wins)  / len(wins)  if wins   else 0.0
     avg_loss_val = abs(sum(t["pnl_thb"] for t in losses) / len(losses)) if losses else 0.0
@@ -314,6 +346,9 @@ def get_portfolio_summary(current_price_thb: float = 0.0) -> dict:
         "has_position":    pos is not None,
         "avg_win":         round(avg_win, 2),
         "avg_loss":        round(avg_loss_val, 2),
+        "total_fees":      round(total_fees, 2),
+        "fee_pct":         TRADE_FEE_PCT,
+        "fee_flat":        TRADE_FEE_FLAT_THB,
     }
 
 
