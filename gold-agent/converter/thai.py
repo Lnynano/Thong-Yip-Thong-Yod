@@ -122,9 +122,9 @@ def convert_to_thb(usd_price: float, usd_thb_rate: float = None) -> dict:
         thb_per_baht_weight_thai = thb_per_baht_weight * THAI_GOLD_PURITY
 
         print(
-            f"[thai.py] ${usd_price:.2f}/oz → "
-            f"฿{thb_per_gram:.2f}/g → "
-            f"฿{thb_per_baht_weight_thai:.2f}/bw (96.5%)  [rate={rate:.4f} {source}]"
+            f"[thai.py] ${usd_price:.2f}/oz -> "
+            f"{thb_per_gram:.2f} THB/g -> "
+            f"{thb_per_baht_weight_thai:.2f} THB/bw (96.5%)  [rate={rate:.4f} {source}]"
         )
 
         return {

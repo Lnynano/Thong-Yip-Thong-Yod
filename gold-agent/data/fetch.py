@@ -312,10 +312,10 @@ if __name__ == "__main__":
     print("\n--- Hua Seng Heng Live Price ---")
     hsh = get_hsh_price()
     if hsh:
-        print(f"Sell (entry) : ฿{hsh['sell']:,.2f}")
-        print(f"Buy  (exit)  : ฿{hsh['buy']:,.2f}")
-        print(f"Mid          : ฿{hsh['mid']:,.2f}")
-        print(f"Spread       : ฿{hsh['spread']:,.2f}")
+        print(f"Sell (entry) : {hsh['sell']:,.2f} THB")
+        print(f"Buy  (exit)  : {hsh['buy']:,.2f} THB")
+        print(f"Mid          : {hsh['mid']:,.2f} THB")
+        print(f"Spread       : {hsh['spread']:,.2f} THB")
         print(f"Market       : {hsh['market_status']}")
         print(f"Updated      : {hsh['timestamp']}")
     else:

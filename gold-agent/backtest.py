@@ -76,7 +76,7 @@ MAX_CANDLES = int(os.environ.get("BACKTEST_MAX_CANDLES", "50"))
 
 
 def usd_to_thb_per_bw(price_usd: float) -> float:
-    """Convert USD/oz → THB per baht-weight (Thai 96.5% purity)."""
+    """Convert USD/oz -> THB per baht-weight (Thai 96.5% purity)."""
     thb_per_oz    = price_usd * USD_THB_RATE
     thb_per_gram  = thb_per_oz / TROY_OZ_GRAMS
     thb_per_bw    = thb_per_gram * BAHT_WEIGHT_GRAMS * PURITY
@@ -156,13 +156,13 @@ def run_backtest() -> dict:
     print("=" * 65)
     print("  GOLD AGENT BACKTEST  (real yfinance data)")
     print(f"  Interval : {interval_used}")
-    print(f"  Data  : {df_full.index[0]}  →  {df_full.index[-1]}")
+    print(f"  Data  : {df_full.index[0]}  ->  {df_full.index[-1]}")
     print(f"  Candles  : {len(df_full)}  |  Live candles: {len(df_full) - MIN_ROWS}")
     print(f"  Start : candle {MIN_ROWS} (Bollinger Bands require {MIN_ROWS} rows)")
     print(f"  Rate  : USD/THB = {USD_THB_RATE} (from env USD_THB_RATE)")
-    print(f"  Capital: ฿{INITIAL_BALANCE_THB:,.0f}  |  Gate: {CONFIDENCE_GATE}% confidence")
+    print(f"  Capital: B{INITIAL_BALANCE_THB:,.0f}  |  Gate: {CONFIDENCE_GATE}% confidence")
     print(f"  TP: +{TAKE_PROFIT_PCT*100:.1f}%  |  SL: {STOP_LOSS_PCT*100:.1f}%  |  Cooldown: {COOLDOWN_ROUNDS} rounds")
-    print(f"  Fees  : {TRADE_FEE_PCT*100:.2f}% per trade + ฿{TRADE_FEE_FLAT_THB:.0f} flat")
+    print(f"  Fees  : {TRADE_FEE_PCT*100:.2f}% per trade + B{TRADE_FEE_FLAT_THB:.0f} flat")
     print("=" * 65)
 
     # ── Paper trading state (in-memory, no portfolio.json touched) ────────────
@@ -181,10 +181,10 @@ def run_backtest() -> dict:
         price_usd  = float(window["Close"].iloc[-1])
         price_thb  = usd_to_thb_per_bw(price_usd)
 
-        print(f"\n{'─'*65}")
-        print(f"  Candle {i+1:3d} | {date} | ${price_usd:,.2f} | ฿{price_thb:,.0f}/bw"
+        print(f"\n{'-'*65}")
+        print(f"  Candle {i+1:3d} | {date} | ${price_usd:,.2f} | B{price_thb:,.0f}/bw"
               + (f"  [cooldown {cooldown}]" if cooldown > 0 else ""))
-        print(f"{'─'*65}")
+        print(f"{'-'*65}")
 
         with patch.object(fetch_module, "get_gold_price", return_value=window):
             agent = run_agent()
@@ -246,10 +246,10 @@ def run_backtest() -> dict:
                 }
                 cooldown = 0
                 action   = "OPENED"
-                print(f"  >> BUY executed  | gross ฿{gross:,.2f} | fee ฿{open_fee:.2f} | size {size_bw:.6f} bw")
-                print(f"     TP @ ฿{open_position['tp_price']:,.0f}  |  SL @ ฿{open_position['sl_price']:,.0f}")
+                print(f"  >> BUY executed  | gross B{gross:,.2f} | fee B{open_fee:.2f} | size {size_bw:.6f} bw")
+                print(f"     TP @ B{open_position['tp_price']:,.0f}  |  SL @ B{open_position['sl_price']:,.0f}")
             else:
-                action = f"SKIP (balance ฿{balance_thb:.0f} < min ฿{MIN_BALANCE_THB:.0f})"
+                action = f"SKIP (balance B{balance_thb:.0f} < min B{MIN_BALANCE_THB:.0f})"
 
         elif decision == "BUY" and open_position is not None:
             action = "SKIP (already holding)"
@@ -283,7 +283,7 @@ def run_backtest() -> dict:
             open_position = None
             cooldown      = COOLDOWN_ROUNDS   # start cooldown after close
             action        = f"CLOSED [{outcome}]"
-            print(f"  >> SELL executed | net ฿{net_proceeds:,.2f} | fee ฿{total_fees:.2f} | P&L {pnl_thb:+.2f} ({pnl_pct:+.2f}%) [{outcome}]")
+            print(f"  >> SELL executed | net B{net_proceeds:,.2f} | fee B{total_fees:.2f} | P&L {pnl_thb:+.2f} ({pnl_pct:+.2f}%) [{outcome}]")
             print(f"     Cooldown started: {COOLDOWN_ROUNDS} rounds")
 
         elif decision == "SELL" and open_position is None:
@@ -297,7 +297,7 @@ def run_backtest() -> dict:
         equity = round(balance_thb + (open_position["size_bw"] * price_thb if open_position else 0), 2)
 
         print(f"  Action     : {action}")
-        print(f"  Equity     : ฿{equity:,.2f}  (cash ฿{balance_thb:,.2f} + unrealized ฿{unrealized:+.2f})")
+        print(f"  Equity     : B{equity:,.2f}  (cash B{balance_thb:,.2f} + unrealized B{unrealized:+.2f})")
 
         daily_log.append({
             "date"       : str(date.date()),
@@ -374,16 +374,16 @@ def run_backtest() -> dict:
     print(f"\n{'='*65}")
     print("  BACKTEST RESULTS  (rules match live paper_engine.py)")
     print(f"{'='*65}")
-    print(f"  Period       : {summary['period_start']} → {summary['period_end']}  ({calendar_days} calendar days)")
+    print(f"  Period       : {summary['period_start']} -> {summary['period_end']}  ({calendar_days} calendar days)")
     print(f"  Candles run  : {candles_run} x {interval_used} bars")
     print(f"  Rules        : gate={CONFIDENCE_GATE}%  TP=+{TAKE_PROFIT_PCT*100:.1f}%  SL={STOP_LOSS_PCT*100:.1f}%  cooldown={COOLDOWN_ROUNDS}")
     print(f"  Closed trades: {summary['total_trades']}  (wins {summary['wins']}  losses {summary['losses']})")
     print(f"  Win rate     : {summary['win_rate']:.1f}%")
-    print(f"  Avg win      : ฿{avg_win:+.2f}  |  Avg loss : ฿{avg_loss:.2f}  |  R:R {rr_ratio:.2f}")
-    print(f"  Total fees   : ฿{summary['total_fees']:,.2f}")
-    print(f"  Total P&L    : ฿{summary['total_pnl']:+,.2f}  (net of fees)")
-    print(f"  Initial      : ฿{summary['initial']:,.2f}")
-    print(f"  Final equity : ฿{summary['final_equity']:,.2f}")
+    print(f"  Avg win      : B{avg_win:+.2f}  |  Avg loss : B{avg_loss:.2f}  |  R:R {rr_ratio:.2f}")
+    print(f"  Total fees   : B{summary['total_fees']:,.2f}")
+    print(f"  Total P&L    : B{summary['total_pnl']:+,.2f}  (net of fees)")
+    print(f"  Initial      : B{summary['initial']:,.2f}")
+    print(f"  Final equity : B{summary['final_equity']:,.2f}")
     print(f"  Return       : {summary['return_pct']:+.2f}%")
     print(f"{'='*65}\n")
 

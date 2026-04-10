@@ -44,7 +44,7 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 # Set TRADE_LOOP_INTERVAL_SEC in .env to override.
 _LOOP_INTERVAL = int(os.getenv("TRADE_LOOP_INTERVAL_SEC", "300"))
 
-# Shared flag — set to True by the Trade Mode toggle in the dashboard.
+# Shared flag -set to True by the Trade Mode toggle in the dashboard.
 # The background thread reads this flag before executing trades.
 _trade_mode_enabled = threading.Event()
 
@@ -78,7 +78,7 @@ def _background_trade_loop() -> None:
     while True:
         try:
             trade_mode = _trade_mode_enabled.is_set()
-            print(f"[scheduler] Cycle start — trade_mode={trade_mode}")
+            print(f"[scheduler] Cycle start -trade_mode={trade_mode}")
 
             from ui.dashboard import run_full_analysis
             run_full_analysis(trade_mode=trade_mode)
@@ -95,31 +95,31 @@ def verify_environment() -> bool:
     Verify that required environment variables are configured.
     """
     print("=" * 60)
-    print("  Gold Trading Agent — Environment Check")
+    print("  Gold Trading Agent -Environment Check")
     print("=" * 60)
 
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key or api_key == "your_key_here":
-        print("  ❌ OPENAI_API_KEY: Not set (agent will return default HOLD)")
+        print("  [X] OPENAI_API_KEY: Not set (agent will return default HOLD)")
     else:
         masked = api_key[:8] + "..." + api_key[-4:] if len(api_key) > 12 else "***"
-        print(f"  ✅ OPENAI_API_KEY: {masked}")
+        print(f"  [OK] OPENAI_API_KEY: {masked}")
 
     news_key = os.getenv("NEWS_API_KEY", "")
     if not news_key or news_key == "your_key_here":
-        print("  ⚠️  NEWS_API_KEY: Not set (will use mock headlines)")
+        print("  [!] NEWS_API_KEY: Not set (will use mock headlines)")
     else:
-        print("  ✅ NEWS_API_KEY: Configured")
+        print("  [OK] NEWS_API_KEY: Configured")
 
     usd_thb = os.getenv("USD_THB_RATE", "34.5")
-    print(f"  ✅ USD_THB_RATE: {usd_thb}")
+    print(f"  [OK] USD_THB_RATE: {usd_thb}")
 
     fee_pct  = os.getenv("TRADE_FEE_PCT", "0.005")
     fee_flat = os.getenv("TRADE_FEE_FLAT_THB", "0")
-    print(f"  ✅ TRADE_FEE_PCT: {float(fee_pct)*100:.2f}%  "
-          f"TRADE_FEE_FLAT_THB: ฿{fee_flat}")
+    print(f"  OK  TRADE_FEE_PCT: {float(fee_pct)*100:.2f}%  "
+          f"TRADE_FEE_FLAT_THB: {fee_flat} THB")
 
-    print(f"  ✅ TRADE_LOOP_INTERVAL_SEC: {_LOOP_INTERVAL}s "
+    print(f"  [OK] TRADE_LOOP_INTERVAL_SEC: {_LOOP_INTERVAL}s "
           f"({'default' if _LOOP_INTERVAL == 300 else 'custom'})")
     print("=" * 60)
     return True
@@ -136,9 +136,9 @@ def run_cli_test():
         from data.fetch import get_gold_price, get_latest_price
         df = get_gold_price()
         price = get_latest_price()
-        print(f"   ✅ Price: ${price:.2f} | Rows: {len(df)}")
+        print(f"   [OK] Price: ${price:.2f} | Rows: {len(df)}")
     except Exception as e:
-        print(f"   ❌ Fetch error: {e}")
+        print(f"   [X] Fetch error: {e}")
         return
 
     try:
@@ -146,41 +146,41 @@ def run_cli_test():
         from indicators.tech import calculate_rsi, calculate_macd
         rsi = calculate_rsi(df)
         macd = calculate_macd(df)
-        print(f"   ✅ RSI: {rsi:.2f} | MACD histogram: {macd['histogram']:.4f}")
+        print(f"   [OK] RSI: {rsi:.2f} | MACD histogram: {macd['histogram']:.4f}")
     except Exception as e:
-        print(f"   ❌ Indicators error: {e}")
+        print(f"   [X] Indicators error: {e}")
 
     try:
         print("\n3. Fetching news...")
         from news.sentiment import get_gold_news, get_sentiment_summary
         headlines = get_gold_news(3)
         sentiment = get_sentiment_summary(headlines)
-        print(f"   ✅ {len(headlines)} headlines | Sentiment: {sentiment}")
+        print(f"   [OK] {len(headlines)} headlines | Sentiment: {sentiment}")
     except Exception as e:
-        print(f"   ❌ News error: {e}")
+        print(f"   [X] News error: {e}")
 
     try:
         print("\n4. Converting to THB (96.5% Thai gold purity)...")
         from converter.thai import convert_to_thb
         thb = convert_to_thb(price)
-        print(f"   ✅ ฿{thb['thb_per_gram']:.2f}/g (pure) | "
-              f"฿{thb['thb_per_baht_weight_thai']:.2f}/baht-wt (96.5% Thai)")
+        print(f"   OK  {thb['thb_per_gram']:.2f} THB/g (pure) | "
+              f"{thb['thb_per_baht_weight_thai']:.2f} THB/baht-wt (96.5% Thai)")
     except Exception as e:
-        print(f"   ❌ Converter error: {e}")
+        print(f"   [X] Converter error: {e}")
 
     try:
         print("\n5. Computing risk metrics...")
         from risk.metrics import calculate_risk
         risk = calculate_risk(df)
         ev = risk["ev"]
-        print(f"   ✅ Sharpe: {risk['sharpe']:.4f} ({risk['sharpe_label']}) | "
+        print(f"   [OK] Sharpe: {risk['sharpe']:.4f} ({risk['sharpe_label']}) | "
               f"Sortino: {risk['sortino']:.4f} | "
               f"MaxDD: {risk['drawdown_pct']}")
-        print(f"   ✅ Full Kelly: {risk['kelly_pct']} | "
+        print(f"   [OK] Full Kelly: {risk['kelly_pct']} | "
               f"Half-Kelly (recommended): {risk['half_kelly_pct']} | "
               f"EV: {ev['ev_pct']} ({'Positive' if ev['is_positive'] else 'Negative'})")
     except Exception as e:
-        print(f"   ❌ Risk metrics error: {e}")
+        print(f"   [X] Risk metrics error: {e}")
 
     print("\n[main.py] CLI test complete. Launching Gradio UI...\n")
 
@@ -217,7 +217,7 @@ def main():
             from ui import dashboard as _dash_mod
             _dash_mod._set_trade_mode_callback = set_trade_mode
         except Exception:
-            pass  # non-critical — background loop uses its own flag
+            pass  # non-critical -background loop uses its own flag
 
         port = int(os.environ.get("PORT", 7860))
 
@@ -238,12 +238,12 @@ def main():
         )
 
     except ImportError as e:
-        print(f"\n❌ Import error: {e}")
+        print(f"\n[X] Import error: {e}")
         print("  Run: pip install -r requirements.txt")
         sys.exit(1)
 
     except Exception as e:
-        print(f"\n❌ Failed to launch dashboard: {e}")
+        print(f"\n[X] Failed to launch dashboard: {e}")
         sys.exit(1)
 
 
