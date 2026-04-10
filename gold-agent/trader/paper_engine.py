@@ -248,7 +248,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
         pnl          = net_proceeds - pos["cost_thb"]        # net of ALL fees
         pnl_pct      = pnl / pos["cost_thb"] * 100
 
-        state["balance"] += net_proceeds
+        state["balance"] = max(0.0, state["balance"] + net_proceeds)  # floor at 0
         trade = {
             "entry_time":  pos["entry_time"],
             "exit_time":   now,

@@ -63,10 +63,12 @@ except ImportError:
     POSITION_SIZE_PCT  = 0.95
     print("[backtest] WARNING: could not import paper_engine — using fallback constants")
 
+from converter.thai import THAI_GOLD_PURITY
+
 USD_THB_RATE      = float(os.environ.get("USD_THB_RATE", "34.5"))  # env var, not hardcoded
 TROY_OZ_GRAMS     = 31.1035
 BAHT_WEIGHT_GRAMS = 15.244
-PURITY            = 0.965
+PURITY            = THAI_GOLD_PURITY  # single source of truth
 MIN_ROWS          = 20      # need 20 rows for Bollinger Bands(20)
 
 # Cap candles to run so API costs stay predictable (override with env var)
