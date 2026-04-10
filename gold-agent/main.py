@@ -219,14 +219,15 @@ def main():
         except Exception:
             pass  # non-critical — background loop uses its own flag
 
+        port = int(os.environ.get("PORT", 7860))
+
         print("\n" + "=" * 60)
         print("  Gold Trading Agent is starting!")
-        print("  Dashboard: http://localhost:7860")
+        print(f"  Dashboard: http://localhost:{port}")
         print("  Background scheduler: RUNNING")
         print("  Press Ctrl+C to stop.")
         print("=" * 60 + "\n")
 
-        port = int(os.environ.get("PORT", 7860))
         demo.launch(
             server_name="0.0.0.0",
             server_port=port,
