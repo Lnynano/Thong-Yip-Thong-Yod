@@ -405,4 +405,4 @@ if __name__ == "__main__":
         print(f"Avg Win                : {ev['avg_win']*100:.4f}%")
         print(f"Avg Loss               : {ev['avg_loss']*100:.4f}%")
         print(f"Reward Ratio (RW/RL)   : {ev['reward_ratio']:.2f}x")
-        print(f"Expected Value (EV)    : {ev['ev_pct']}  ({'✅ Positive' if ev['is_positive'] else '❌ Negative'})")
+        print(f"Expected Value (EV)    : {ev['ev_pct']}  ({'[OK] Positive' if ev['is_positive'] else '[X] Negative'})")

@@ -436,7 +436,7 @@ def _validate_decision(decision: dict) -> dict:
 
     # Safety check 1: Valid decision value
     if raw_decision not in valid_decisions:
-        print(f"[trading_agent.py] Invalid decision '{raw_decision}' → forcing HOLD")
+        print(f"[trading_agent.py] Invalid decision '{raw_decision}' -> forcing HOLD")
         raw_decision = "HOLD"
 
     # Safety check 2: Confidence bounds
@@ -445,7 +445,7 @@ def _validate_decision(decision: dict) -> dict:
 
     # Safety check 3: Low confidence → HOLD
     if confidence < 40 and raw_decision != "HOLD":
-        print(f"[trading_agent.py] Low confidence {confidence}% → forcing HOLD")
+        print(f"[trading_agent.py] Low confidence {confidence}% -> forcing HOLD")
         raw_decision = "HOLD"
 
     # Safety check 4: Non-empty reasoning

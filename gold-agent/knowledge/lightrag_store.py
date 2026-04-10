@@ -206,7 +206,7 @@ def insert_headlines(headlines: list[str]) -> None:
 
     current_hash = hashlib.md5("|".join(headlines).encode()).hexdigest()
     if current_hash == _last_inserted_hash:
-        print("[lightrag_store.py] Headlines unchanged → skipping insert (saved Haiku calls)")
+        print("[lightrag_store.py] Headlines unchanged -> skipping insert (saved Haiku calls)")
         return
 
     try:

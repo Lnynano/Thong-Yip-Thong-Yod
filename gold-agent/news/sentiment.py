@@ -146,12 +146,12 @@ def get_sentiment_summary(headlines: list[str]) -> str:
     Returns:
         str: "BULLISH", "BEARISH", or "NEUTRAL".
     """
-    # ── Cache check: same headlines within TTL → skip API call ──────────────
+    # ── Cache check: same headlines within TTL -> skip API call ──────────────
     cache_key = hashlib.md5("|".join(headlines).encode()).hexdigest()
     now = time.time()
     if (_sentiment_cache["key"] == cache_key and
             now - _sentiment_cache["ts"] < _CACHE_TTL):
-        print(f"[sentiment.py] Cache hit → {_sentiment_cache['value']} (saved 1 Haiku call)")
+        print(f"[sentiment.py] Cache hit -> {_sentiment_cache['value']} (saved 1 Haiku call)")
         return _sentiment_cache["value"]
 
     api_key = os.getenv("OPENAI_API_KEY", "").strip()

@@ -16,7 +16,7 @@ Usage:
     track_usage(response.usage, source="trading_agent")
 
     summary = get_cost_summary()
-    print(f"Total LLM cost: ฿{summary['total_thb']:.2f}")
+    print(f"Total LLM cost: {summary['total_thb']:.2f} THB")
 """
 
 import json
