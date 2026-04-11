@@ -44,6 +44,7 @@ try:
         STOP_LOSS_PCT,
         TRAILING_SL_PCT,
         COOLDOWN_ROUNDS,
+        LOSS_COOLDOWN,
         TRADE_FEE_PCT,
         TRADE_FEE_FLAT_THB,
         DEFAULT_BALANCE  as INITIAL_BALANCE_THB,
@@ -57,7 +58,8 @@ except ImportError:
     TAKE_PROFIT_PCT    = 0.015
     STOP_LOSS_PCT      = -0.010
     TRAILING_SL_PCT    = 0.007
-    COOLDOWN_ROUNDS    = 2
+    COOLDOWN_ROUNDS    = 0
+    LOSS_COOLDOWN      = 1
     TRADE_FEE_PCT      = float(os.environ.get("TRADE_FEE_PCT", "0.005"))
     TRADE_FEE_FLAT_THB = float(os.environ.get("TRADE_FEE_FLAT_THB", "0"))
     INITIAL_BALANCE_THB = 1500.0
@@ -298,7 +300,7 @@ def run_backtest() -> dict:
             }
             closed_trades.append(trade)
             open_position = None
-            cooldown      = COOLDOWN_ROUNDS   # start cooldown after close
+            cooldown      = LOSS_COOLDOWN if outcome == "LOSS" else COOLDOWN_ROUNDS
             action        = f"CLOSED [{outcome}]"
             print(f"  >> SELL executed | net B{net_proceeds:,.2f} | fee B{total_fees:.2f} | P&L {pnl_thb:+.2f} ({pnl_pct:+.2f}%) [{outcome}]")
             print(f"     Cooldown started: {COOLDOWN_ROUNDS} rounds")
@@ -357,6 +359,18 @@ def run_backtest() -> dict:
     avg_loss = abs(sum(t["pnl_thb"] for t in losses)) / len(losses) if losses else 0.0
     rr_ratio = round(avg_win / avg_loss, 2) if avg_loss > 0 else 0.0
 
+    # Buy-and-hold benchmark: what if you just bought gold on day 1 and held?
+    first_price_thb = daily_log[0]["price_thb"] if daily_log else 0
+    if first_price_thb > 0 and last_price_thb > 0:
+        bah_size_bw     = (INITIAL_BALANCE_THB * 0.95) / first_price_thb
+        bah_final       = bah_size_bw * last_price_thb
+        bah_pnl         = bah_final - (INITIAL_BALANCE_THB * 0.95)
+        bah_return_pct  = round(bah_pnl / INITIAL_BALANCE_THB * 100, 2)
+    else:
+        bah_pnl         = 0.0
+        bah_return_pct  = 0.0
+    agent_alpha = round(ret_pct - bah_return_pct, 2)
+
     summary = {
         "period_start"  : daily_log[0]["date"] if daily_log else "—",
         "period_end"    : daily_log[-1]["date"] if daily_log else "—",
@@ -376,6 +390,9 @@ def run_backtest() -> dict:
         "avg_win"       : round(avg_win, 2),
         "avg_loss"      : round(avg_loss, 2),
         "rr_ratio"      : rr_ratio,
+        # Buy-and-hold benchmark
+        "bah_return_pct": bah_return_pct,
+        "agent_alpha"   : agent_alpha,
         # Rules used — for transparency in results
         "rules"         : {
             "confidence_gate" : CONFIDENCE_GATE,
@@ -383,7 +400,7 @@ def run_backtest() -> dict:
             "stop_loss_pct"   : STOP_LOSS_PCT   * 100,
             "cooldown_rounds" : COOLDOWN_ROUNDS,
             "fee_pct"         : TRADE_FEE_PCT   * 100,
-            "position_size"   : POSITION_SIZE_PCT * 100,
+            "trailing_sl_pct" : TRAILING_SL_PCT  * 100,
             "usd_thb_rate"    : USD_THB_RATE,
         },
     }
@@ -402,6 +419,9 @@ def run_backtest() -> dict:
     print(f"  Initial      : B{summary['initial']:,.2f}")
     print(f"  Final equity : B{summary['final_equity']:,.2f}")
     print(f"  Return       : {summary['return_pct']:+.2f}%")
+    print(f"\n  --- vs Buy-and-Hold ---")
+    print(f"  B&H return   : {bah_return_pct:+.2f}%")
+    print(f"  Agent alpha  : {agent_alpha:+.2f}%  ({'AGENT WINS' if agent_alpha > 0 else 'B&H WINS'})")
     print(f"{'='*65}\n")
 
     return {

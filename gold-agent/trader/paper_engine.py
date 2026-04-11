@@ -34,7 +34,8 @@ CONF_THRESHOLD  = 65
 TAKE_PROFIT_PCT = 0.015   # +1.5% -> auto SELL (lock profit)
 STOP_LOSS_PCT   = -0.010  # -1.0% -> auto SELL (cut loss)
 TRAILING_SL_PCT = 0.007   # trailing stop: 0.7% below highest price since entry
-COOLDOWN_ROUNDS = 0       # disabled — 30-min interval + 65% confidence gate is sufficient protection
+COOLDOWN_ROUNDS = 0       # normal cooldown (disabled)
+LOSS_COOLDOWN   = 1       # extra cooldown after a LOSS trade — skip 1 cycle to avoid revenge trading
 
 # ── Position sizing by confidence ────────────────────────────
 # Higher confidence = larger position. Prevents betting big on weak signals.
@@ -304,7 +305,8 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
         }
         state["closed_trades"].append(trade)
         state["open_position"] = None
-        state["cooldown"]      = COOLDOWN_ROUNDS   # start cooldown after close
+        # Cooldown: extra pause after a LOSS to prevent revenge trading
+        state["cooldown"]      = LOSS_COOLDOWN if trade["outcome"] == "LOSS" else COOLDOWN_ROUNDS
         _record_equity(state, price_thb)
         _save(state)
         print(f"[paper_engine.py] CLOSED  {trade['outcome']}  "
@@ -405,6 +407,57 @@ def get_equity_history() -> list:
 def get_recent_outcomes(n: int = 15) -> list:
     """Return last n outcomes as WIN/LOSS strings for the coloured bar."""
     return [t["outcome"] for t in reversed(get_trade_history(n))]
+
+
+def get_performance_report(current_price_thb: float = 0.0) -> str:
+    """
+    Generate a text performance report for export/presentation.
+
+    Returns:
+        str: Formatted multi-line performance summary.
+    """
+    p = get_portfolio_summary(current_price_thb)
+
+    # LLM costs
+    try:
+        from logger.cost_tracker import get_cost_summary
+        cost = get_cost_summary()
+        llm_cost = cost["total_cost_thb"]
+        llm_calls = cost["call_count"]
+    except Exception:
+        llm_cost = 0.0
+        llm_calls = 0
+
+    net_after_llm = p["total_equity"] - llm_cost
+
+    lines = [
+        "=" * 50,
+        "  PERFORMANCE REPORT - Gold Trading Agent",
+        "=" * 50,
+        f"  Initial capital  : {p['initial_balance']:,.2f} THB",
+        f"  Current equity   : {p['total_equity']:,.2f} THB",
+        f"  Total P&L        : {p['total_pnl']:+,.2f} THB ({p['total_pnl_pct']:+.2f}%)",
+        f"  Realized P&L     : {p['realized_pnl']:+,.2f} THB",
+        f"  Unrealized P&L   : {p['unrealized_pnl']:+,.2f} THB",
+        f"  Trading fees     : {p['total_fees']:,.2f} THB",
+        "",
+        f"  Total trades     : {p['total_trades']}",
+        f"  Wins / Losses    : {p['wins']} / {p['losses']}",
+        f"  Win rate         : {p['win_rate']:.1f}%",
+        f"  Avg win          : {p['avg_win']:+,.2f} THB",
+        f"  Avg loss         : {p['avg_loss']:,.2f} THB",
+        f"  Risk/Reward      : {p['rr_ratio']:.2f}:1",
+        "",
+        f"  LLM API calls    : {llm_calls}",
+        f"  LLM API cost     : {llm_cost:,.2f} THB",
+        f"  Net after LLM    : {net_after_llm:,.2f} THB",
+        "",
+        f"  Rules: gate={CONF_THRESHOLD}%  TP=+{TAKE_PROFIT_PCT*100:.1f}%  "
+        f"SL={STOP_LOSS_PCT*100:.1f}%  Trail={TRAILING_SL_PCT*100:.1f}%",
+        f"  Loss cooldown    : {LOSS_COOLDOWN} round(s)",
+        "=" * 50,
+    ]
+    return "\n".join(lines)
 
 
 def reset_portfolio(initial_balance: float = DEFAULT_BALANCE) -> None:

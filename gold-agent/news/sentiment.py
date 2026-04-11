@@ -132,6 +132,65 @@ def _keyword_sentiment(headlines: list[str]) -> str:
     return "NEUTRAL"
 
 
+def get_sentiment_strength(headlines: list[str]) -> dict:
+    """
+    Return sentiment label + strength based on keyword unanimity.
+
+    Strength reflects how many headlines agree:
+      5/5 or 4/5 same direction -> STRONG
+      3/5 same direction        -> MODERATE
+      otherwise                 -> WEAK
+
+    Returns:
+        dict: {"sentiment": str, "strength": str, "bull_count": int, "bear_count": int}
+    """
+    bullish_kw = [
+        "surge", "rally", "high", "gain", "rise", "up", "buy", "bull",
+        "record", "demand", "safe-haven", "haven", "inflation", "gold surges",
+    ]
+    bearish_kw = [
+        "fall", "drop", "decline", "plunge", "crash", "low", "sell",
+        "loss", "weakness", "down", "negative", "risk", "pressure", "correction",
+    ]
+
+    bull_count = 0
+    bear_count = 0
+    for h in headlines:
+        h_lower = h.lower()
+        b = sum(1 for kw in bullish_kw if kw in h_lower)
+        s = sum(1 for kw in bearish_kw if kw in h_lower)
+        if b > s:
+            bull_count += 1
+        elif s > b:
+            bear_count += 1
+
+    total = len(headlines) if headlines else 1
+    dominant = max(bull_count, bear_count)
+    ratio = dominant / total
+
+    if ratio >= 0.8:
+        strength = "STRONG"
+    elif ratio >= 0.6:
+        strength = "MODERATE"
+    else:
+        strength = "WEAK"
+
+    if bull_count > bear_count:
+        sentiment = "BULLISH"
+    elif bear_count > bull_count:
+        sentiment = "BEARISH"
+    else:
+        sentiment = "NEUTRAL"
+        strength = "WEAK"
+
+    return {
+        "sentiment": sentiment,
+        "strength": strength,
+        "bull_count": bull_count,
+        "bear_count": bear_count,
+    }
+
+
 def get_sentiment_summary(headlines: list[str]) -> str:
     """
     Score gold news sentiment using GPT-4o-mini.
