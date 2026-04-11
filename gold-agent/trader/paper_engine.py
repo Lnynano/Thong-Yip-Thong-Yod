@@ -31,9 +31,24 @@ MIN_TRADE_THB   = 1000.0
 CONF_THRESHOLD  = 65
 
 # ── Risk management constants ─────────────────────────────────
-TAKE_PROFIT_PCT = 0.015   # +1.5% → auto SELL (lock profit)
-STOP_LOSS_PCT   = -0.010  # -1.0% → auto SELL (cut loss)
+TAKE_PROFIT_PCT = 0.015   # +1.5% -> auto SELL (lock profit)
+STOP_LOSS_PCT   = -0.010  # -1.0% -> auto SELL (cut loss)
+TRAILING_SL_PCT = 0.007   # trailing stop: 0.7% below highest price since entry
 COOLDOWN_ROUNDS = 0       # disabled — 30-min interval + 65% confidence gate is sufficient protection
+
+# ── Position sizing by confidence ────────────────────────────
+# Higher confidence = larger position. Prevents betting big on weak signals.
+#   65-74% -> 60% of balance
+#   75-84% -> 80% of balance
+#   85%+   -> 95% of balance
+def _size_pct_by_confidence(confidence: int) -> float:
+    """Return position size as fraction of balance based on confidence."""
+    if confidence >= 85:
+        return 0.95
+    elif confidence >= 75:
+        return 0.80
+    else:
+        return 0.60
 
 # ── Trading fee constants (loaded from env) ───────────────────
 # Applied on every transaction (both open and close).
@@ -179,18 +194,36 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
 
     now = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
-    # ── Auto TP/SL check (overrides agent decision) ─────────
+    # ── Auto TP/SL + trailing stop check (overrides agent decision) ──
     pos = state["open_position"]
     if pos is not None:
-        change_pct = (price_thb - pos["entry_price"]) / pos["entry_price"]
+        entry = pos["entry_price"]
+        change_pct = (price_thb - entry) / entry
+
+        # Update highest price seen (for trailing stop)
+        highest = max(pos.get("highest_price", entry), price_thb)
+        pos["highest_price"] = highest
+
+        # Trailing stop: if price drops TRAILING_SL_PCT below the peak
+        trailing_sl_price = highest * (1 - TRAILING_SL_PCT)
+        trailing_triggered = (price_thb <= trailing_sl_price and highest > entry)
+
         if change_pct >= TAKE_PROFIT_PCT:
             decision   = "SELL"
             confidence = 100
             print(f"[paper_engine.py] TAKE PROFIT triggered at {change_pct*100:+.2f}%")
+        elif trailing_triggered:
+            decision   = "SELL"
+            confidence = 100
+            print(f"[paper_engine.py] TRAILING STOP triggered: "
+                  f"peak={highest:,.0f} now={price_thb:,.0f} "
+                  f"drop={((price_thb - highest) / highest * 100):+.2f}%")
         elif change_pct <= STOP_LOSS_PCT:
             decision   = "SELL"
             confidence = 100
             print(f"[paper_engine.py] STOP LOSS triggered at {change_pct*100:+.2f}%")
+        else:
+            _save(state)  # persist updated highest_price
 
     # ── Confidence gate (skip TP/SL override) ────────────────
     if confidence < CONF_THRESHOLD:
@@ -212,26 +245,32 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
             return {"action": "SKIP",
                     "reason": f"Balance {available:.0f} THB < minimum {MIN_TRADE_THB:.0f} THB"}
 
-        gross   = available * 0.95          # 95% of balance allocated
+        size_pct = _size_pct_by_confidence(confidence)
+        gross   = available * size_pct      # confidence-scaled position
         fee     = _calc_fee(gross)          # fee on open
         cost    = round(gross + fee, 2)     # total deducted from balance
         size_bw = gross / price_thb         # gold bought with gross amount (fee is overhead)
 
         state["balance"]       -= cost
         state["open_position"]  = {
-            "direction":   "BUY",
-            "entry_price": price_thb,
-            "size_bw":     round(size_bw, 6),
-            "cost_thb":    round(gross, 2),  # gross cost (excluding fee) for P&L base
-            "open_fee":    fee,
-            "entry_time":  now,
+            "direction":    "BUY",
+            "entry_price":  price_thb,
+            "highest_price": price_thb,   # for trailing stop
+            "size_bw":      round(size_bw, 6),
+            "cost_thb":     round(gross, 2),  # gross cost (excluding fee) for P&L base
+            "open_fee":     fee,
+            "entry_time":   now,
+            "confidence":   confidence,
+            "size_pct":     size_pct,
         }
         state["cooldown"] = 0
         _record_equity(state, price_thb)
         _save(state)
         print(f"[paper_engine.py] OPENED  {size_bw:.5f} bw @ {price_thb:,.0f} THB  "
-              f"fee={fee:.2f} THB  "
-              f"TP={price_thb*(1+TAKE_PROFIT_PCT):,.0f}  SL={price_thb*(1+STOP_LOSS_PCT):,.0f}")
+              f"conf={confidence}% size={size_pct*100:.0f}%  fee={fee:.2f} THB  "
+              f"TP={price_thb*(1+TAKE_PROFIT_PCT):,.0f}  "
+              f"SL={price_thb*(1+STOP_LOSS_PCT):,.0f}  "
+              f"Trail={TRAILING_SL_PCT*100:.1f}%")
         return {"action": "OPENED", "size_bw": size_bw,
                 "price_thb": price_thb, "cost_thb": gross, "fee_thb": fee,
                 "tp_price": round(price_thb * (1 + TAKE_PROFIT_PCT), 0),

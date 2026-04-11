@@ -296,8 +296,9 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
             except Exception as e:
                 print(f"[trading_agent.py] DXY/VIX fetch failed (non-critical): {e}")
 
-            # Multi-timeframe: H1 context
+            # Multi-timeframe: H1 context + confirmation filter
             h1_context = {}
+            mtf_confirmed = True   # assume confirmed if H1 unavailable
             try:
                 from data.fetch import get_gold_price_intraday
                 df_h1 = get_gold_price_intraday(interval="1h", days=5)
@@ -308,6 +309,15 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
                     h1_rsi_sig = ("OVERBOUGHT" if h1_rsi > 70
                                   else "OVERSOLD" if h1_rsi < 30
                                   else "NEUTRAL")
+
+                    # MTF confirmation: D1 and H1 must agree
+                    # If D1 says buy (buy_score > sell_score) but H1 RSI is overbought -> conflict
+                    # If D1 says sell (sell_score > buy_score) but H1 RSI is oversold -> conflict
+                    if buy_score > sell_score and h1_rsi > 65:
+                        mtf_confirmed = False   # D1 bullish but H1 already stretched
+                    elif sell_score > buy_score and h1_rsi < 35:
+                        mtf_confirmed = False   # D1 bearish but H1 already oversold
+
                     h1_context = {
                         "interval": "H1",
                         "bars": len(df_h1),
@@ -315,7 +325,9 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
                         "rsi_signal": h1_rsi_sig,
                         "macd_histogram": h1_macd["histogram"],
                         "trend": h1_trend,
-                        "note": "H1 RSI and MACD for intraday momentum confirmation",
+                        "mtf_confirmed": mtf_confirmed,
+                        "note": ("H1 CONFIRMS D1 signal" if mtf_confirmed
+                                 else "H1 CONFLICTS with D1 - reduce conviction"),
                     }
             except Exception as e:
                 print(f"[trading_agent.py] H1 MTF fetch failed (non-critical): {e}")
