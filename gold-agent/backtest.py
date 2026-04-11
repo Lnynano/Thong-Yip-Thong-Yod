@@ -42,25 +42,30 @@ try:
         CONF_THRESHOLD   as CONFIDENCE_GATE,
         TAKE_PROFIT_PCT,
         STOP_LOSS_PCT,
+        TRAILING_SL_PCT,
         COOLDOWN_ROUNDS,
         TRADE_FEE_PCT,
         TRADE_FEE_FLAT_THB,
         DEFAULT_BALANCE  as INITIAL_BALANCE_THB,
         MIN_TRADE_THB    as MIN_BALANCE_THB,
+        _size_pct_by_confidence,
     )
-    POSITION_SIZE_PCT = 0.95   # matches paper_engine open logic (gross = balance * 0.95)
     print("[backtest] Loaded trading rules from paper_engine.py")
 except ImportError:
     # Fallback if paper_engine can't be imported
     CONFIDENCE_GATE    = 65
     TAKE_PROFIT_PCT    = 0.015
     STOP_LOSS_PCT      = -0.010
+    TRAILING_SL_PCT    = 0.007
     COOLDOWN_ROUNDS    = 2
     TRADE_FEE_PCT      = float(os.environ.get("TRADE_FEE_PCT", "0.005"))
     TRADE_FEE_FLAT_THB = float(os.environ.get("TRADE_FEE_FLAT_THB", "0"))
     INITIAL_BALANCE_THB = 1500.0
     MIN_BALANCE_THB    = 1000.0
-    POSITION_SIZE_PCT  = 0.95
+    def _size_pct_by_confidence(conf):
+        if conf >= 85: return 0.95
+        elif conf >= 75: return 0.80
+        else: return 0.60
     print("[backtest] WARNING: could not import paper_engine — using fallback constants")
 
 from converter.thai import THAI_GOLD_PURITY
@@ -209,6 +214,14 @@ def run_backtest() -> dict:
                 decision   = "SELL"
                 confidence = 100
                 print(f"  ** TAKE PROFIT triggered at {change_pct*100:+.2f}% (>= +{TAKE_PROFIT_PCT*100:.1f}%)")
+            # Trailing stop: track highest price, trigger if drops below threshold
+            highest = max(open_position.get("highest_price", entry_price), price_thb)
+            open_position["highest_price"] = highest
+            trailing_sl_price = highest * (1 - TRAILING_SL_PCT)
+            if price_thb <= trailing_sl_price and highest > entry_price:
+                decision   = "SELL"
+                confidence = 100
+                print(f"  ** TRAILING STOP triggered: peak={highest:,.0f} now={price_thb:,.0f}")
             elif change_pct <= STOP_LOSS_PCT:
                 decision   = "SELL"
                 confidence = 100
@@ -230,19 +243,23 @@ def run_backtest() -> dict:
         # ── Step 4: BUY — open long ───────────────────────────────────────────
         elif decision == "BUY" and open_position is None:
             if balance_thb >= MIN_BALANCE_THB:
-                gross    = round(balance_thb * POSITION_SIZE_PCT, 2)
+                size_pct = _size_pct_by_confidence(confidence)
+                gross    = round(balance_thb * size_pct, 2)
                 open_fee = _calc_fee(gross)
                 cost     = round(gross + open_fee, 2)
                 size_bw  = gross / price_thb
                 balance_thb  -= cost
                 open_position = {
-                    "entry_date"  : str(date.date()),
-                    "entry_price" : price_thb,
-                    "size_bw"     : size_bw,
-                    "cost_thb"    : gross,
-                    "open_fee"    : open_fee,
-                    "tp_price"    : round(price_thb * (1 + TAKE_PROFIT_PCT), 0),
-                    "sl_price"    : round(price_thb * (1 + STOP_LOSS_PCT), 0),
+                    "entry_date"   : str(date.date()),
+                    "entry_price"  : price_thb,
+                    "highest_price": price_thb,
+                    "size_bw"      : size_bw,
+                    "cost_thb"     : gross,
+                    "open_fee"     : open_fee,
+                    "tp_price"     : round(price_thb * (1 + TAKE_PROFIT_PCT), 0),
+                    "sl_price"     : round(price_thb * (1 + STOP_LOSS_PCT), 0),
+                    "confidence"   : confidence,
+                    "size_pct"     : size_pct,
                 }
                 cooldown = 0
                 action   = "OPENED"
