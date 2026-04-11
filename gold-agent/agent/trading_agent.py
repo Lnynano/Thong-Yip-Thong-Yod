@@ -263,6 +263,33 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
             except Exception:
                 daily_summary = ""
 
+            # ── News sentiment strength (weighted scoring) ────────────────────
+            try:
+                from news.sentiment import get_gold_news, get_sentiment_strength
+                _headlines = get_gold_news(5)
+                news_str = get_sentiment_strength(_headlines)
+                if news_str["sentiment"] == "BULLISH":
+                    buy_score += 2 if news_str["strength"] == "STRONG" else 1
+                elif news_str["sentiment"] == "BEARISH":
+                    sell_score += 2 if news_str["strength"] == "STRONG" else 1
+            except Exception:
+                pass
+
+            # ── Volume spike detection ────────────────────────────────────────
+            try:
+                vol = df["Volume"].tail(20)
+                if len(vol) >= 20:
+                    avg_vol = vol.iloc[:-1].mean()
+                    latest_vol = float(vol.iloc[-1])
+                    if avg_vol > 0 and latest_vol > avg_vol * 1.5:
+                        # Volume spike = something big happening, boost dominant signal
+                        if buy_score > sell_score:
+                            buy_score += 1
+                        elif sell_score > buy_score:
+                            sell_score += 1
+            except Exception:
+                pass
+
             # ── DXY + VIX macro indicators ───────────────────────────────────
             dxy_context = {}
             vix_context = {}
