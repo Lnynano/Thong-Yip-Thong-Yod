@@ -131,8 +131,7 @@ def _write_candle_log(rows: list[dict]) -> None:
         return
     os.makedirs(_DATA_DIR, exist_ok=True)
     fieldnames = ["candle", "date", "price_usd", "price_thb", "decision",
-                  "confidence", "action", "pnl_thb", "equity_thb",
-                  "llm_cost_thb", "cumulative_llm_cost_thb"]
+                  "confidence", "action", "pnl_thb", "equity_thb"]
     with open(_CANDLE_LOG, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
@@ -168,26 +167,15 @@ def run_backtest() -> dict:
             "open_position" : dict or None,
         }
     """
+    import time
     import yfinance as yf
+    from logger.cost_tracker import get_cost_summary as _get_cost_summary
 
-    # ── Cost tracker (backtest session only — separate from live costs) ────────
-    _session_cost_usd = 0.0
-    _session_cost_thb = 0.0
-    _session_calls    = 0
+    # ── Timer ────────────────────────────────────────────────────────────────
+    _start_time = time.time()
 
-    def _track_cost(usage, source: str = "backtest") -> float:
-        """Track API cost for this backtest session (does NOT persist to llm_costs.json)."""
-        nonlocal _session_cost_usd, _session_cost_thb, _session_calls
-        if usage is None:
-            return 0.0
-        inp  = getattr(usage, "prompt_tokens",     0) or 0
-        out  = getattr(usage, "completion_tokens", 0) or 0
-        cost_usd = inp * (0.150 / 1_000_000) + out * (0.600 / 1_000_000)
-        cost_thb = cost_usd * USD_THB_RATE
-        _session_cost_usd += cost_usd
-        _session_cost_thb += cost_thb
-        _session_calls    += 1
-        return cost_thb
+    # ── Cost tracker: snapshot before run, diff after ─────────────────────────
+    _cost_before = _get_cost_summary()
 
     # ── Fetch data ────────────────────────────────────────────────────────────
     df_full       = None
@@ -246,13 +234,9 @@ def run_backtest() -> dict:
     closed_trades = []
     daily_log     = []
     cooldown      = 0
-    cum_llm_cost  = 0.0
 
     import data.fetch as fetch_module
     from agent.trading_agent import run_agent
-
-    # Patch run_agent to capture usage for cost tracking
-    _orig_run_agent = run_agent
 
     for i in range(MIN_ROWS - 1, len(df_full)):
         window    = df_full.iloc[: i + 1].copy()
@@ -269,12 +253,6 @@ def run_backtest() -> dict:
 
         with _quiet(), patch.object(fetch_module, "get_gold_price", return_value=window):
             agent = run_agent()
-
-        # Track API cost from agent response if available
-        candle_cost_thb = 0.0
-        if hasattr(agent, "_usage"):
-            candle_cost_thb = _track_cost(agent._usage, "backtest")
-        cum_llm_cost += candle_cost_thb
 
         decision   = agent["decision"]
         confidence = agent["confidence"]
@@ -378,17 +356,15 @@ def run_backtest() -> dict:
         equity = round(balance_thb + (open_position["size_bw"] * price_thb if open_position else 0), 2)
 
         daily_log.append({
-            "candle"                : candle_no,
-            "date"                  : str(date.date()),
-            "price_usd"             : price_usd,
-            "price_thb"             : price_thb,
-            "decision"              : decision,
-            "confidence"            : confidence,
-            "action"                : action,
-            "pnl_thb"               : pnl_thb,
-            "equity_thb"            : equity,
-            "llm_cost_thb"          : round(candle_cost_thb, 4),
-            "cumulative_llm_cost_thb": round(cum_llm_cost, 4),
+            "candle"    : candle_no,
+            "date"      : str(date.date()),
+            "price_usd" : price_usd,
+            "price_thb" : price_thb,
+            "decision"  : decision,
+            "confidence": confidence,
+            "action"    : action,
+            "pnl_thb"   : pnl_thb,
+            "equity_thb": equity,
         })
 
     # Clear progress line
@@ -434,6 +410,14 @@ def run_backtest() -> dict:
     _write_candle_log(daily_log)
     _write_trade_log(closed_trades)
 
+    # ── Cost delta + timer ────────────────────────────────────────────────────
+    _cost_after    = _get_cost_summary()
+    _session_calls = _cost_after["call_count"]     - _cost_before["call_count"]
+    _session_usd   = round(_cost_after["total_cost_usd"] - _cost_before["total_cost_usd"], 6)
+    _session_thb   = round(_cost_after["total_cost_thb"] - _cost_before["total_cost_thb"], 4)
+    _elapsed       = time.time() - _start_time
+    _mins, _secs   = divmod(int(_elapsed), 60)
+
     # ── Pretty results ────────────────────────────────────────────────────────
     ret_sign  = "+" if ret_pct >= 0 else ""
     bah_sign  = "+" if bah_return_pct >= 0 else ""
@@ -468,8 +452,10 @@ def run_backtest() -> dict:
     print("")
     print("  API COST (this run)")
     print(f"  {'Calls':<14}: {_session_calls}")
-    print(f"  {'Cost USD':<14}: ${_session_cost_usd:.4f}")
-    print(f"  {'Cost THB':<14}: B{_session_cost_thb:.4f}")
+    print(f"  {'Cost USD':<14}: ${_session_usd:.4f}")
+    print(f"  {'Cost THB':<14}: B{_session_thb:.4f}")
+    print("")
+    print(f"  Time taken  : {_mins}m {_secs}s")
     print("")
     print("  LOGS SAVED")
     print(f"  Candle log  : data/backtest_log.csv    ({len(daily_log)} rows)")
@@ -498,9 +484,10 @@ def run_backtest() -> dict:
         "rr_ratio"         : rr_ratio,
         "bah_return_pct"   : bah_return_pct,
         "agent_alpha"      : agent_alpha,
-        "llm_cost_usd"     : round(_session_cost_usd, 6),
-        "llm_cost_thb"     : round(_session_cost_thb, 4),
+        "llm_cost_usd"     : _session_usd,
+        "llm_cost_thb"     : _session_thb,
         "llm_calls"        : _session_calls,
+        "elapsed_seconds"  : round(_elapsed, 1),
         "rules": {
             "confidence_gate" : CONFIDENCE_GATE,
             "take_profit_pct" : TAKE_PROFIT_PCT * 100,
