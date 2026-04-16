@@ -102,18 +102,18 @@ class TestExecutePaperTrade:
         assert result["price_thb"] == PRICE
         assert saved["open_position"] is not None
         assert saved["open_position"]["direction"] == "BUY"
-        # cost should be 95% of 1500 = 1425 THB
-        assert abs(saved["open_position"]["cost_thb"] - 1425.0) < 0.01
-        # balance should be 1500 - 1425 = 75 THB
-        assert abs(saved["balance"] - 75.0) < 0.01
+        # conf=70% → 60% size_pct → cost = 1500 * 0.60 = 900 THB
+        assert abs(saved["open_position"]["cost_thb"] - 900.0) < 0.01
+        # balance should be 1500 - 900 = 600 THB
+        assert abs(saved["balance"] - 600.0) < 0.01
 
     def test_buy_size_calculation(self):
-        """size_bw = cost / price_thb = 1425 / 45000"""
+        """size_bw = cost / price_thb — conf=70% uses 60% of balance = 900 / 45000"""
         s = fresh()
         with patch.object(pe, "_load", return_value=s), \
              patch.object(pe, "_save"):
             result = pe.execute_paper_trade("BUY", 70, PRICE)
-        expected_size = 1425.0 / PRICE
+        expected_size = 900.0 / PRICE   # 60% allocation at conf=70%
         assert abs(result["size_bw"] - expected_size) < 1e-6
 
     def test_buy_when_position_already_open_skips(self):
@@ -200,7 +200,9 @@ class TestExecutePaperTrade:
         with patch.object(pe, "_load", return_value=state_with_position()), \
              patch.object(pe, "_save", mock_save):
             pe.execute_paper_trade("SELL", 70, PRICE * 1.01)
-        mock_save.assert_called_once()
+        # _save is called at least once: once to persist trailing-stop peak,
+        # once more to persist the closed trade — both are valid & expected
+        mock_save.assert_called()
 
     def test_save_not_called_on_skip(self):
         mock_save = MagicMock()
