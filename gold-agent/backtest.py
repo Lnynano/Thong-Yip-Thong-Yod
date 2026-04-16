@@ -217,10 +217,10 @@ def run_backtest() -> dict:
                 confidence = 100
                 print(f"  ** TAKE PROFIT triggered at {change_pct*100:+.2f}% (>= +{TAKE_PROFIT_PCT*100:.1f}%)")
             # Trailing stop: track highest price, trigger if drops below threshold
-            highest = max(open_position.get("highest_price", entry_price), price_thb)
+            highest = max(open_position.get("highest_price", open_position["entry_price"]), price_thb)
             open_position["highest_price"] = highest
             trailing_sl_price = highest * (1 - TRAILING_SL_PCT)
-            if price_thb <= trailing_sl_price and highest > entry_price:
+            if price_thb <= trailing_sl_price and highest > open_position["entry_price"]:
                 decision   = "SELL"
                 confidence = 100
                 print(f"  ** TRAILING STOP triggered: peak={highest:,.0f} now={price_thb:,.0f}")
