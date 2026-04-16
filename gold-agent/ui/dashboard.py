@@ -1020,7 +1020,9 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
 
         # 6. Trading agent
         from agent.trading_agent import run_agent
-        agent      = run_agent()
+        from trader.trade_scheduler import trades_remaining_today
+        _quota_pressure = can_trade_now() and trades_remaining_today() > 0
+        agent      = run_agent(quota_pressure=_quota_pressure)
         decision   = agent.get("decision", "HOLD")
         confidence = agent.get("confidence", 0)
         reasoning  = agent.get("reasoning", "No reasoning.")
@@ -1035,7 +1037,8 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
                                         get_trade_history, get_equity_history, get_recent_outcomes
         from trader.trade_scheduler import can_trade_now, record_trade
         if trade_mode and can_trade_now():
-            trade_result = execute_paper_trade(decision, confidence, thb_now)
+            _min_conf = 50 if _quota_pressure else None
+            trade_result = execute_paper_trade(decision, confidence, thb_now, min_confidence=_min_conf)
             if trade_result.get("action") not in ("DISABLED", "SKIP", None):
                 record_trade()
         elif trade_mode and not can_trade_now():
