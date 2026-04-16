@@ -24,9 +24,29 @@ Notes:
 import sys
 import os
 import csv
+import logging
 import pandas as pd
+from contextlib import contextmanager
 from datetime import datetime
 from unittest.mock import patch
+
+
+@contextmanager
+def _quiet():
+    """Suppress all stdout, stderr, and logging during a block."""
+    import io
+    # Silence logging
+    logging.disable(logging.CRITICAL)
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+    try:
+        yield
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+        logging.disable(logging.NOTSET)
 
 # ── Path setup ───────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -174,9 +194,10 @@ def run_backtest() -> dict:
     interval_used = ""
 
     print("")
-    print("  Fetching price data from yfinance...")
+    print("  Fetching price data...")
     try:
-        raw = yf.download("GC=F", period="60d", interval="1h", progress=False, auto_adjust=True)
+        with _quiet():
+            raw = yf.download("GC=F", period="60d", interval="1h", progress=False, auto_adjust=True)
         if not raw.empty and len(raw) >= MIN_ROWS + 5:
             if isinstance(raw.columns, pd.MultiIndex):
                 raw.columns = raw.columns.get_level_values(0)
@@ -184,11 +205,12 @@ def run_backtest() -> dict:
             df_full = raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
             interval_used = "1h"
     except Exception as e:
-        print(f"  1h fetch failed ({e}), trying daily...")
+        pass  # try daily below
 
     if df_full is None or len(df_full) < MIN_ROWS + 5:
         try:
-            raw = yf.download("GC=F", period="6mo", interval="1d", progress=False, auto_adjust=True)
+            with _quiet():
+                raw = yf.download("GC=F", period="6mo", interval="1d", progress=False, auto_adjust=True)
             if isinstance(raw.columns, pd.MultiIndex):
                 raw.columns = raw.columns.get_level_values(0)
             raw.index.name = "Date"
@@ -245,7 +267,7 @@ def run_backtest() -> dict:
         status   = f"[{bar}] {candle_no}/{total_candles} ({pct_done:.0f}%)"
         print(f"\r  Running {status}  B{balance_thb:,.0f}", end="", flush=True)
 
-        with patch.object(fetch_module, "get_gold_price", return_value=window):
+        with _quiet(), patch.object(fetch_module, "get_gold_price", return_value=window):
             agent = run_agent()
 
         # Track API cost from agent response if available
