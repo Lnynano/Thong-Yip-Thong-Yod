@@ -289,8 +289,14 @@ def run_backtest() -> dict:
             })
             continue
 
+        # Quota pressure: check if this window still needs trades
+        date_str_today = str(date.date())
+        _window_trades.setdefault(date_str_today, {})
+        _window_used = _window_trades[date_str_today].get(candle_window, 0)
+        _quota_pressure = _window_used < 2  # min 2 per window
+
         with _quiet(), patch.object(fetch_module, "get_gold_price", return_value=window):
-            agent = run_agent()
+            agent = run_agent(quota_pressure=_quota_pressure)
 
         decision   = agent["decision"]
         confidence = agent["confidence"]
@@ -315,7 +321,8 @@ def run_backtest() -> dict:
                 confidence = 100
 
         # ── Gate / Cooldown ───────────────────────────────────────────────────
-        if confidence < CONFIDENCE_GATE:
+        _effective_gate = 50 if _quota_pressure else CONFIDENCE_GATE
+        if confidence < _effective_gate:
             action = "SKIP"
             if cooldown > 0:
                 cooldown -= 1

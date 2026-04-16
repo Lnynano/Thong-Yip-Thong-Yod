@@ -165,7 +165,7 @@ def _calc_fee(trade_value_thb: float) -> float:
     return round(trade_value_thb * TRADE_FEE_PCT + TRADE_FEE_FLAT_THB, 2)
 
 
-def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dict:
+def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_confidence: int | None = None) -> dict:
     """
     Evaluate the agent decision and simulate a trade if conditions are met.
 
@@ -227,9 +227,10 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float) -> dic
             _save(state)  # persist updated highest_price
 
     # ── Confidence gate (skip TP/SL override) ────────────────
-    if confidence < CONF_THRESHOLD:
+    effective_gate = min_confidence if min_confidence is not None else CONF_THRESHOLD
+    if confidence < effective_gate:
         return {"action": "SKIP",
-                "reason": f"Confidence {confidence}% < {CONF_THRESHOLD}% threshold"}
+                "reason": f"Confidence {confidence}% < {effective_gate}% threshold"}
 
     # ── Cooldown check ────────────────────────────────────────
     cooldown = state.get("cooldown", 0)

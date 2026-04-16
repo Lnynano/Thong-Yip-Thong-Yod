@@ -548,7 +548,7 @@ def _parse_json_with_retry(text: str, attempt: int = 1) -> dict | None:
 # ─────────────────────────────────────────────────────────────
 # Main Agent Function  (ReAct loop)
 # ─────────────────────────────────────────────────────────────
-def run_agent() -> dict:
+def run_agent(quota_pressure: bool = False) -> dict:
     """
     Run the gold trading ReAct agent.
 
@@ -613,6 +613,16 @@ def run_agent() -> dict:
                 ),
             },
         ]
+
+        if quota_pressure:
+            quota_note = (
+                "\n\nIMPORTANT — QUOTA PRESSURE: You are inside an active trading window "
+                "that has not yet met its minimum trade quota. If your analysis shows ANY "
+                "directional bias (even moderate), output BUY or SELL with at least 50% "
+                "confidence instead of HOLD. Meeting the window quota is a competition requirement."
+            )
+            # Append to the system message content
+            messages[0]["content"] += quota_note
 
         print("[trading_agent.py] Starting ReAct agent loop...")
         agent_trace.append("[AGENT STARTED] ReAct trajectory τ begins")
