@@ -131,7 +131,7 @@ def _write_candle_log(rows: list[dict]) -> None:
         return
     os.makedirs(_DATA_DIR, exist_ok=True)
     fieldnames = ["candle", "date", "price_usd", "price_thb", "decision",
-                  "confidence", "action", "pnl_thb", "equity_thb"]
+                  "confidence", "action", "window", "pnl_thb", "equity_thb"]
     with open(_CANDLE_LOG, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
@@ -235,6 +235,28 @@ def run_backtest() -> dict:
     daily_log     = []
     cooldown      = 0
 
+    # ── Window tracking (mirrors trade_scheduler.py rules) ───────────────────
+    from trader.trade_scheduler import _WEEKDAY_LOGICAL, _WEEKEND_LOGICAL
+    _THAI_TZ = __import__("datetime").timezone(__import__("datetime").timedelta(hours=7))
+
+    def _get_candle_window(dt) -> str | None:
+        """Return window name if candle falls inside a valid trading window, else None."""
+        try:
+            local = dt.astimezone(_THAI_TZ)
+        except Exception:
+            local = dt
+        minutes = local.hour * 60 + local.minute
+        is_weekend = local.weekday() >= 5
+        windows = _WEEKEND_LOGICAL if is_weekend else _WEEKDAY_LOGICAL
+        for w in windows:
+            for start, end in w["ranges"]:
+                if start <= minutes <= end:
+                    return w["name"]
+        return None
+
+    # window_trades[date][window_name] = count
+    _window_trades: dict = {}
+
     import data.fetch as fetch_module
     from agent.trading_agent import run_agent
 
@@ -250,6 +272,22 @@ def run_backtest() -> dict:
         bar      = _bar(candle_no, total_candles, width=30)
         status   = f"[{bar}] {candle_no}/{total_candles} ({pct_done:.0f}%)"
         print(f"\r  Running {status}  B{balance_thb:,.0f}", end="", flush=True)
+
+        # ── Window gate — only run agent inside valid trading windows ────────
+        candle_window = _get_candle_window(date)
+        if candle_window is None:
+            daily_log.append({
+                "candle"    : candle_no,
+                "date"      : str(date.date()),
+                "price_usd" : price_usd,
+                "price_thb" : price_thb,
+                "decision"  : "HOLD",
+                "confidence": 0,
+                "action"    : "OUT_OF_WINDOW",
+                "pnl_thb"   : 0.0,
+                "equity_thb": round(balance_thb + (open_position["size_bw"] * price_thb if open_position else 0), 2),
+            })
+            continue
 
         with _quiet(), patch.object(fetch_module, "get_gold_price", return_value=window):
             agent = run_agent()
@@ -309,6 +347,9 @@ def run_backtest() -> dict:
                 }
                 cooldown = 0
                 action   = "OPENED"
+                date_str = str(date.date())
+                _window_trades.setdefault(date_str, {})
+                _window_trades[date_str][candle_window] = _window_trades[date_str].get(candle_window, 0) + 1
             else:
                 action = "SKIP"
 
@@ -344,6 +385,9 @@ def run_backtest() -> dict:
             open_position = None
             cooldown      = LOSS_COOLDOWN if outcome == "LOSS" else COOLDOWN_ROUNDS
             action        = f"CLOSED [{outcome}]"
+            date_str = str(date.date())
+            _window_trades.setdefault(date_str, {})
+            _window_trades[date_str][candle_window] = _window_trades[date_str].get(candle_window, 0) + 1
 
         elif decision == "SELL" and open_position is None:
             action = "SKIP"
@@ -363,6 +407,7 @@ def run_backtest() -> dict:
             "decision"  : decision,
             "confidence": confidence,
             "action"    : action,
+            "window"    : candle_window,
             "pnl_thb"   : pnl_thb,
             "equity_thb": equity,
         })
@@ -449,6 +494,29 @@ def run_backtest() -> dict:
     print(f"  {'Buy & Hold':<14}: {bah_sign}{bah_return_pct:.2f}%")
     alpha_label = "AGENT WINS" if agent_alpha > 0 else "B&H WINS"
     print(f"  {'Alpha':<14}: {alp_sign}{agent_alpha:.2f}%  [{alpha_label}]")
+    print("")
+    # ── Window compliance ─────────────────────────────────────────────────────
+    trading_days  = [d for d in _window_trades]
+    days_compliant = 0
+    days_total     = len(trading_days)
+    for day, windows in _window_trades.items():
+        total_day_trades = sum(windows.values())
+        if total_day_trades >= 6:
+            days_compliant += 1
+
+    print("  WINDOW COMPLIANCE")
+    print(f"  {'Min trades/day':<14}: 6  (2 per window x 3 windows)")
+    if trading_days:
+        print(f"  {'Days traded':<14}: {days_total}")
+        print(f"  {'Days met quota':<14}: {days_compliant}/{days_total}", end="")
+        print(f"  {'[OK]' if days_compliant == days_total else '[BELOW QUOTA]'}")
+        for day, windows in sorted(_window_trades.items()):
+            total = sum(windows.values())
+            marker = "[OK]" if total >= 6 else f"[NEED {6 - total} MORE]"
+            win_str = "  ".join(f"{k}:{v}" for k, v in windows.items())
+            print(f"    {day}  {win_str:<30} total={total} {marker}")
+    else:
+        print("  No trades recorded in any window.")
     print("")
     print("  API COST (this run)")
     print(f"  {'Calls':<14}: {_session_calls}")
