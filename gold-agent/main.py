@@ -59,15 +59,9 @@ def set_trade_mode(enabled: bool) -> None:
 
 def _background_trade_loop() -> None:
     """
-    Background thread: runs the full analysis + trade pipeline every
-    TRADE_LOOP_INTERVAL_SEC seconds, completely independent of the browser.
-
-    Trade execution only happens when:
-      1. Trade mode is ON (_trade_mode_enabled is set)
-      2. Current time is inside an active trade window (trade_scheduler)
-
-    Analysis (price, indicators, news, logging) always runs so the
-    dashboard has fresh data when anyone opens it.
+    Background thread: fires the trade pipeline only when trade mode is ON
+    and inside an active trading window. Otherwise does a cheap price fetch
+    to keep the process warm on Render without burning LLM API credits.
     """
     print("[scheduler] Background trade loop started "
           f"(interval={_LOOP_INTERVAL}s)")
@@ -78,12 +72,25 @@ def _background_trade_loop() -> None:
     while True:
         try:
             trade_mode = _trade_mode_enabled.is_set()
-            print(f"[scheduler] Cycle start -trade_mode={trade_mode}")
 
-            from ui.dashboard import run_full_analysis
-            run_full_analysis(trade_mode=trade_mode)
+            if trade_mode:
+                from trader.trade_scheduler import can_trade_now
+                if can_trade_now():
+                    print("[scheduler] Trade window open + trade mode ON — running full analysis")
+                    from ui.dashboard import run_full_analysis
+                    run_full_analysis(trade_mode=True)
+                else:
+                    print("[scheduler] Trade mode ON but outside window — skipping LLM call")
+            else:
+                # Keep-alive: cheap price fetch only, no LLM calls
+                try:
+                    from data.fetch import get_gold_price
+                    df = get_gold_price()
+                    price = float(df["Close"].iloc[-1]) if not df.empty else 0
+                    print(f"[scheduler] Keep-alive ping — price ${price:.2f} (no LLM call)")
+                except Exception:
+                    pass
 
-            print(f"[scheduler] Cycle complete. Next in {_LOOP_INTERVAL}s.")
         except Exception as e:
             print(f"[scheduler] Cycle error (will retry next interval): {e}")
 

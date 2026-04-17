@@ -23,7 +23,9 @@ load_dotenv()
 # ── Sentiment cache — avoid duplicate API calls within same refresh cycle ──
 # If the same headlines are seen again within 10 minutes, return cached result.
 _sentiment_cache: dict = {"key": None, "value": None, "ts": 0.0}
+_headlines_cache: dict = {"value": None, "ts": 0.0}
 _CACHE_TTL = 600  # 10 minutes
+_HEADLINES_TTL = 300  # 5 minutes — matches dashboard refresh interval
 
 # Large pool of realistic mock headlines — 5 are randomly picked each refresh
 # so users never see the same set twice when no API key is configured.
@@ -64,6 +66,10 @@ def get_gold_news(max_headlines: int = 5) -> list[str]:
     Returns:
         list[str]: List of headline strings (real or mock).
     """
+    if _headlines_cache["value"] is not None and time.time() - _headlines_cache["ts"] < _HEADLINES_TTL:
+        print("[sentiment.py] Cache hit -> returning cached headlines (saved NewsAPI call)")
+        return _headlines_cache["value"]
+
     api_key = os.getenv("NEWS_API_KEY", "").strip()
 
     if not api_key or api_key == "your_key_here":
@@ -100,6 +106,8 @@ def get_gold_news(max_headlines: int = 5) -> list[str]:
             return random.sample(MOCK_HEADLINE_POOL, min(max_headlines, len(MOCK_HEADLINE_POOL)))
 
         print(f"[sentiment.py] Fetched {len(headlines)} real headlines.")
+        _headlines_cache["value"] = headlines
+        _headlines_cache["ts"] = time.time()
         return headlines
 
     except requests.exceptions.Timeout:
