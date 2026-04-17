@@ -143,16 +143,11 @@ def convert_to_thb(usd_price: float, usd_thb_rate: float = None) -> dict:
         return default
 
 
-def format_thb(amount: float) -> str:
-    """Format a Thai Baht amount with symbol and thousand separators."""
-    return f"฿{amount:,.2f}"
-
-
 # Allow standalone testing
 if __name__ == "__main__":
     result = convert_to_thb(2350.0)
     print("\n--- Gold Price Conversion ---")
     print(f"USD per troy oz              : ${result['usd_per_oz']:,.2f}")
     print(f"USD/THB rate ({result['rate_source']:6})      : {result['usd_thb_rate']}")
-    print(f"THB per gram (100%)          : {format_thb(result['thb_per_gram'])}")
-    print(f"THB per baht-weight (96.5%)  : {format_thb(result['thb_per_baht_weight_thai'])}")
+    print(f"THB per gram (100%)          : {result['thb_per_gram']:,.2f}")
+    print(f"THB per baht-weight (96.5%)  : {result['thb_per_baht_weight_thai']:,.2f}")

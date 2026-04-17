@@ -233,76 +233,6 @@ def calculate_bollinger_bands(df: pd.DataFrame,
 
 
 # ─────────────────────────────────────────────────────────────
-# Combined summary  (structured state for LLM)
-# ─────────────────────────────────────────────────────────────
-def get_signal_summary(df: pd.DataFrame) -> dict:
-    """
-    Compute RSI, MACD, and Bollinger Bands and return a combined structured dict.
-
-    "Pass computed values to the LLM as structured context:
-    'RSI: 42.1 (Neutral)'"
-
-    Use structured state representation, not free-form prose.
-
-    Args:
-        df (pd.DataFrame): DataFrame with a 'Close' column.
-
-    Returns:
-        dict: Combined RSI, MACD, and Bollinger Band values with signals.
-    """
-    rsi = calculate_rsi(df)
-    macd = calculate_macd(df)
-    bb = calculate_bollinger_bands(df)
-
-    # RSI interpretation
-    if rsi > 70:
-        rsi_signal = "OVERBOUGHT"
-    elif rsi < 30:
-        rsi_signal = "OVERSOLD"
-    else:
-        rsi_signal = "NEUTRAL"
-
-    macd_signal = "BULLISH" if macd["histogram"] > 0 else "BEARISH"
-
-    # Count signals agreeing: if RSI + MACD + BB all say same thing, higher conviction
-    bull_signals = sum([
-        rsi < 40,                     # RSI approaching oversold → bullish
-        macd["histogram"] > 0,        # MACD histogram positive → bullish
-        bb["percent_b"] < 0.3,        # Price near lower BB → bullish
-    ])
-    bear_signals = sum([
-        rsi > 60,                     # RSI approaching overbought → bearish
-        macd["histogram"] < 0,        # MACD histogram negative → bearish
-        bb["percent_b"] > 0.7,        # Price near upper BB → bearish
-    ])
-
-    if bull_signals >= 2:
-        overall_signal = "BULLISH"
-    elif bear_signals >= 2:
-        overall_signal = "BEARISH"
-    else:
-        overall_signal = "MIXED"
-
-    return {
-        "rsi": rsi,
-        "rsi_signal": rsi_signal,
-        "macd": macd["macd"],
-        "macd_signal_line": macd["signal"],
-        "macd_histogram": macd["histogram"],
-        "macd_signal": macd_signal,
-        "bb_upper": bb["upper"],
-        "bb_middle": bb["middle"],
-        "bb_lower": bb["lower"],
-        "bb_percent_b": bb["percent_b"],
-        "bb_bandwidth": bb["bandwidth"],
-        "bb_signal": bb["signal"],
-        "overall_signal": overall_signal,
-        "bull_signals": bull_signals,
-        "bear_signals": bear_signals,
-    }
-
-
-# ─────────────────────────────────────────────────────────────
 # Confluence Score  (0–10 scale for UI display)
 # ─────────────────────────────────────────────────────────────
 def calculate_confluence_score(df: pd.DataFrame, news_sentiment: str = "NEUTRAL") -> float:
@@ -427,4 +357,3 @@ if __name__ == "__main__":
         print(f"RSI  : {calculate_rsi(df)}")
         print(f"MACD : {calculate_macd(df)}")
         print(f"BBands: {calculate_bollinger_bands(df)}")
-        print(f"Summary: {get_signal_summary(df)}")

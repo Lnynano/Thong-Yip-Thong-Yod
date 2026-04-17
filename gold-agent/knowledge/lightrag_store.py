@@ -11,7 +11,7 @@ with Gradio's asyncio event loop (LightRAG uses loop.run_until_complete
 internally, which raises RuntimeError if called from within a running loop).
 
 Models:
-  LLM        : claude-haiku-4-5-20251001 (entity/relation extraction)
+  LLM        : gpt-4o-mini (entity/relation extraction)
   Embeddings : all-MiniLM-L6-v2 via sentence-transformers (384-dim, local)
 
 Storage: data/lightrag/ (persisted alongside portfolio.json)

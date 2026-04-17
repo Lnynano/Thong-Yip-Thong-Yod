@@ -8,6 +8,7 @@ Also provides get_hsh_price() — live gold price from Hua Seng Heng
 for the Thammasat University trading competition.
 """
 
+import time
 import yfinance as yf
 import pandas as pd
 import requests
@@ -19,6 +20,11 @@ _THAI_TZ = timezone(timedelta(hours=7))
 # Stores the last successful fetch time for display in the UI
 _last_fetched_at: str = "Never"
 
+# TTL cache — avoids redundant yfinance calls within the same refresh cycle
+_FETCH_CACHE_TTL = 300  # 5 minutes
+_price_cache: dict = {"df": None, "ts": 0.0}
+_macro_cache: dict = {"data": None, "ts": 0.0}
+
 
 def get_gold_price() -> pd.DataFrame:
     """
@@ -26,12 +32,16 @@ def get_gold_price() -> pd.DataFrame:
 
     Uses yfinance with ticker symbol 'GC=F' (COMEX Gold Futures).
     Stores a human-readable fetch timestamp accessible via get_fetch_time().
+    Results are cached for 5 minutes to avoid redundant calls within one refresh cycle.
 
     Returns:
         pd.DataFrame: DataFrame with columns [Open, High, Low, Close, Volume]
                       indexed by Date. Returns empty DataFrame on failure.
     """
-    global _last_fetched_at
+    global _last_fetched_at, _price_cache
+
+    if _price_cache["df"] is not None and time.time() - _price_cache["ts"] < _FETCH_CACHE_TTL:
+        return _price_cache["df"]
 
     try:
         end_date = datetime.today()
@@ -58,6 +68,7 @@ def get_gold_price() -> pd.DataFrame:
 
         print(f"[fetch.py] Fetched {len(df)} rows. "
               f"Latest close: {df['Close'].iloc[-1]:.2f} USD  (at {_last_fetched_at})")
+        _price_cache = {"df": df, "ts": time.time()}
         return df
 
     except Exception as e:
@@ -143,6 +154,10 @@ def get_macro_indicators() -> dict:
         }
         Returns empty dicts for each on failure (non-critical).
     """
+    global _macro_cache
+    if _macro_cache["data"] is not None and time.time() - _macro_cache["ts"] < _FETCH_CACHE_TTL:
+        return _macro_cache["data"]
+
     result = {"dxy": {}, "vix": {}}
 
     try:
@@ -207,6 +222,7 @@ def get_macro_indicators() -> dict:
     except Exception as e:
         print(f"[fetch.py] Macro indicators fetch failed (non-critical): {e}")
 
+    _macro_cache = {"data": result, "ts": time.time()}
     return result
 
 

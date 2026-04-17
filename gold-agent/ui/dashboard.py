@@ -43,7 +43,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 # │    4. CLEAR LOG button
 # │    5. Backtest tab
 # └─────────────────────────────────────────────────────────────────────────────
-DEV_MODE: bool = False   # ← change to False before deploying
+DEV_MODE: bool = True
+   # ← change to False before deploying
 
 _INTERVALS = {"REAL": 1800, "TEST": 15}
 _current_mode: str = "REAL"
@@ -1020,7 +1021,7 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
 
         # 6. Trading agent
         from agent.trading_agent import run_agent
-        from trader.trade_scheduler import trades_remaining_today
+        from trader.trade_scheduler import can_trade_now, trades_remaining_today
         _quota_pressure = can_trade_now() and trades_remaining_today() > 0
         agent      = run_agent(quota_pressure=_quota_pressure)
         decision   = agent.get("decision", "HOLD")
@@ -1035,7 +1036,7 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         # 7. Paper trade execution — ONLY when trade_mode is ON AND scheduler allows
         from trader.paper_engine import execute_paper_trade, get_portfolio_summary, \
                                         get_trade_history, get_equity_history, get_recent_outcomes
-        from trader.trade_scheduler import can_trade_now, record_trade
+        from trader.trade_scheduler import record_trade
         if trade_mode and can_trade_now():
             _min_conf = 50 if _quota_pressure else None
             trade_result = execute_paper_trade(decision, confidence, thb_now, min_confidence=_min_conf)

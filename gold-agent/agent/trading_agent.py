@@ -177,7 +177,7 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
 
         # ── Tool: get_price ──────────────────────────────────────────────────
         if tool_name == "get_price":
-            from data.fetch import get_gold_price
+            from data.fetch import get_gold_price, get_hsh_price
             df = get_gold_price()
             if df.empty:
                 return json.dumps({"error": "Could not fetch gold price data."})
@@ -207,6 +207,20 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
                 "price_change_pct": price_change_pct,
                 "trend": "UP" if price_change_pct > 0 else "DOWN",
             }
+
+            # Add HSH live price (official competition price — THB, includes spread)
+            try:
+                hsh = get_hsh_price()
+                if hsh:
+                    result["hsh_live_price"] = {
+                        "buy_thb" : hsh["buy"],
+                        "sell_thb": hsh["sell"],
+                        "spread"  : hsh["spread"],
+                        "note"    : "HSH sell = price you PAY to buy. HSH buy = price you RECEIVE when selling.",
+                    }
+            except Exception:
+                pass
+
             return json.dumps(result)
 
         # ── Tool: get_indicators ─────────────────────────────────────────────
