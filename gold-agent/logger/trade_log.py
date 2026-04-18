@@ -57,7 +57,7 @@ def log_analysis(decision: str, confidence: int, price_usd: str,
                  sharpe: str, reasoning: str) -> None:
     """Append one analysis result to MongoDB or CSV fallback."""
     timestamp = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M")
-    short_reason = reasoning[:80] + "..." if len(reasoning) > 80 else reasoning
+    short_reason = reasoning[:500] + "..." if len(reasoning) > 500 else reasoning
 
     # ── MongoDB ──────────────────────────────────────────────
     col = _get_mongo_collection()
@@ -125,7 +125,7 @@ def send_trade_log(action: str, price_thb: float, reason: str,
     payload = {
         "action":        action.upper(),
         "price":         price_thb,
-        "reason":        reason[:200],
+        "reason":        reason[:500],
         "confidence":    confidence,
         "signal_source": "gold_agent_gpt4o_mini",
     }

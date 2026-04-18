@@ -164,6 +164,27 @@ def trades_remaining_today() -> int:
     return total
 
 
+def current_window_quota_met() -> bool:
+    """Return True if the current window has already reached its minimum quota."""
+    window = _current_window()
+    if window is None:
+        return True
+    state = _load_state()
+    used = state["windows"].get(window["name"], 0)
+    return used >= window["min_trades"]
+
+
+def minutes_until_window_end() -> int | None:
+    """Return minutes remaining in the current window, or None if not in a window."""
+    now = datetime.now(_THAI_TZ)
+    minutes = now.hour * 60 + now.minute
+    for w in _get_windows():
+        for start, end in w["ranges"]:
+            if start <= minutes <= end:
+                return end - minutes
+    return None
+
+
 # ─── Standalone test ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
