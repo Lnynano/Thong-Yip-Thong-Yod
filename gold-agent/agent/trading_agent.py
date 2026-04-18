@@ -192,34 +192,34 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
                 / recent["Close"].iloc[0] * 100, 2
             )
 
-            # Structured state (markdown-friendly)
-            result = {
-                "asset": "XAUUSD (Gold Futures)",
-                "current_price_usd": round(current_price, 2),
-                "period_days": len(recent),
-                "ohlcv_summary": {
-                    "open" : round(float(recent["Open"].iloc[0]), 2),
-                    "high" : round(float(recent["High"].max()), 2),
-                    "low"  : round(float(recent["Low"].min()), 2),
-                    "close": round(float(recent["Close"].iloc[-1]), 2),
-                    "avg_volume": int(recent["Volume"].mean()),
-                },
-                "price_change_pct": price_change_pct,
-                "trend": "UP" if price_change_pct > 0 else "DOWN",
-            }
-
-            # Add HSH live price (official competition price — THB, includes spread)
+            # HSH live price is the authoritative current price (96.5% Thai gold)
+            result = {"asset": "Thai Gold 96.5% / XAUUSD"}
             try:
                 hsh = get_hsh_price()
                 if hsh:
-                    result["hsh_live_price"] = {
-                        "buy_thb" : hsh["buy"],
-                        "sell_thb": hsh["sell"],
-                        "spread"  : hsh["spread"],
-                        "note"    : "HSH sell = price you PAY to buy. HSH buy = price you RECEIVE when selling.",
-                    }
+                    result["current_price_source"]   = "HSH_LIVE_96.5pct"
+                    result["current_price_thb_sell"] = hsh["sell"]
+                    result["current_price_thb_buy"]  = hsh["buy"]
+                    result["spread_thb"]             = hsh["spread"]
+                    result["note"] = "sell_thb = price you PAY to BUY. buy_thb = price you RECEIVE when SELLING."
+                else:
+                    result["current_price_source"] = "yfinance_futures"
+                    result["current_price_usd"]    = round(current_price, 2)
             except Exception:
-                pass
+                result["current_price_source"] = "yfinance_futures"
+                result["current_price_usd"]    = round(current_price, 2)
+
+            result["historical_usd_close"] = round(current_price, 2)
+            result["period_days"]          = len(recent)
+            result["ohlcv_summary"] = {
+                "open" : round(float(recent["Open"].iloc[0]), 2),
+                "high" : round(float(recent["High"].max()), 2),
+                "low"  : round(float(recent["Low"].min()), 2),
+                "close": round(float(recent["Close"].iloc[-1]), 2),
+                "avg_volume": int(recent["Volume"].mean()),
+            }
+            result["price_change_pct"] = price_change_pct
+            result["trend"]            = "UP" if price_change_pct > 0 else "DOWN"
 
             return json.dumps(result)
 
@@ -562,7 +562,7 @@ def _parse_json_with_retry(text: str, attempt: int = 1) -> dict | None:
 # ─────────────────────────────────────────────────────────────
 # Main Agent Function  (ReAct loop)
 # ─────────────────────────────────────────────────────────────
-def run_agent(quota_pressure: bool = False) -> dict:
+def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False) -> dict:
     """
     Run the gold trading ReAct agent.
 
@@ -635,8 +635,16 @@ def run_agent(quota_pressure: bool = False) -> dict:
                 "directional bias (even moderate), output BUY or SELL with at least 50% "
                 "confidence instead of HOLD. Meeting the window quota is a competition requirement."
             )
-            # Append to the system message content
             messages[0]["content"] += quota_note
+
+        if failsafe_pressure:
+            failsafe_note = (
+                "\n\nCRITICAL FAILSAFE — WINDOW CLOSING IN UNDER 10 MINUTES: The minimum "
+                "trade quota for this window has NOT been met. You MUST output BUY or SELL. "
+                "HOLD is not acceptable under any circumstances. Pick the stronger directional "
+                "signal from the available data right now. This is a hard competition requirement."
+            )
+            messages[0]["content"] += failsafe_note
 
         print("[trading_agent.py] Starting ReAct agent loop...")
         agent_trace.append("[AGENT STARTED] ReAct trajectory τ begins")

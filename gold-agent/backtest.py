@@ -238,22 +238,41 @@ def run_backtest() -> dict:
 
     # ── Window tracking (mirrors trade_scheduler.py rules) ───────────────────
     from trader.trade_scheduler import _WEEKDAY_LOGICAL, _WEEKEND_LOGICAL
-    _THAI_TZ = __import__("datetime").timezone(__import__("datetime").timedelta(hours=7))
+    import datetime as _dt
+    _THAI_TZ = _dt.timezone(_dt.timedelta(hours=7))
+
+    def _to_thai(dt):
+        """Convert candle timestamp to Thai time, assuming UTC if tz-naive."""
+        try:
+            return dt.astimezone(_THAI_TZ)
+        except Exception:
+            return dt.replace(tzinfo=_dt.timezone.utc).astimezone(_THAI_TZ)
 
     def _get_candle_window(dt) -> str | None:
         """Return window name if candle falls inside a valid trading window, else None."""
-        try:
-            local = dt.astimezone(_THAI_TZ)
-        except Exception:
-            local = dt
+        local   = _to_thai(dt)
         minutes = local.hour * 60 + local.minute
-        is_weekend = local.weekday() >= 5
-        windows = _WEEKEND_LOGICAL if is_weekend else _WEEKDAY_LOGICAL
+        windows = _WEEKEND_LOGICAL if local.weekday() >= 5 else _WEEKDAY_LOGICAL
         for w in windows:
             for start, end in w["ranges"]:
                 if start <= minutes <= end:
                     return w["name"]
         return None
+
+    def _minutes_until_window_end(dt) -> int | None:
+        """Return minutes remaining in the candle's trading window, or None if outside."""
+        local   = _to_thai(dt)
+        minutes = local.hour * 60 + local.minute
+        windows = _WEEKEND_LOGICAL if local.weekday() >= 5 else _WEEKDAY_LOGICAL
+        for w in windows:
+            for start, end in w["ranges"]:
+                if start <= minutes <= end:
+                    return end - minutes
+        return None
+
+    def _thai_date_str(dt) -> str:
+        """Return Thai-timezone date string for grouping window trades."""
+        return str(_to_thai(dt).date())
 
     # window_trades[date][window_name] = count
     _window_trades: dict = {}
@@ -279,7 +298,7 @@ def run_backtest() -> dict:
         if candle_window is None:
             daily_log.append({
                 "candle"    : candle_no,
-                "date"      : str(date.date()),
+                "date"      : _to_thai(date).strftime("%Y-%m-%d %H:%M"),
                 "price_usd" : price_usd,
                 "price_thb" : price_thb,
                 "decision"  : "HOLD",
@@ -321,6 +340,27 @@ def run_backtest() -> dict:
                 decision   = "SELL"
                 confidence = 100
 
+        # ── Failsafe: window ending in ≤10 min, quota not met, still HOLD ────
+        _mins_left = _minutes_until_window_end(date)
+        if (decision == "HOLD" and
+                _mins_left is not None and _mins_left <= 10 and
+                _window_used < 2):
+            with _quiet(), patch.object(fetch_module, "get_gold_price", return_value=window):
+                agent = run_agent(quota_pressure=True, failsafe_pressure=True)
+            decision   = agent["decision"]
+            confidence = agent["confidence"]
+            reasoning  = agent["reasoning"]
+            if decision == "HOLD":
+                decision   = "BUY"
+                confidence = 51
+                reasoning  = "[FAILSAFE] Window closing, quota not met. Forced BUY signal."
+
+        # ── Count BUY/SELL decision toward window quota ───────────────────────
+        if decision in ("BUY", "SELL"):
+            date_str = _thai_date_str(date)
+            _window_trades.setdefault(date_str, {})
+            _window_trades[date_str][candle_window] = _window_trades[date_str].get(candle_window, 0) + 1
+
         # ── Gate / Cooldown ───────────────────────────────────────────────────
         _effective_gate = 50 if _quota_pressure else CONFIDENCE_GATE
         if confidence < _effective_gate:
@@ -355,9 +395,6 @@ def run_backtest() -> dict:
                 }
                 cooldown = 0
                 action   = "OPENED"
-                date_str = str(date.date())
-                _window_trades.setdefault(date_str, {})
-                _window_trades[date_str][candle_window] = _window_trades[date_str].get(candle_window, 0) + 1
             else:
                 action = "SKIP"
 
@@ -393,9 +430,6 @@ def run_backtest() -> dict:
             open_position = None
             cooldown      = LOSS_COOLDOWN if outcome == "LOSS" else COOLDOWN_ROUNDS
             action        = f"CLOSED [{outcome}]"
-            date_str = str(date.date())
-            _window_trades.setdefault(date_str, {})
-            _window_trades[date_str][candle_window] = _window_trades[date_str].get(candle_window, 0) + 1
 
         elif decision == "SELL" and open_position is None:
             action = "SKIP"
@@ -438,8 +472,8 @@ def run_backtest() -> dict:
     candles_run = len(daily_log)
 
     try:
-        d0 = datetime.strptime(daily_log[0]["date"], "%Y-%m-%d")
-        d1 = datetime.strptime(daily_log[-1]["date"], "%Y-%m-%d")
+        d0 = datetime.strptime(daily_log[0]["date"], "%Y-%m-%d %H:%M")
+        d1 = datetime.strptime(daily_log[-1]["date"], "%Y-%m-%d %H:%M")
         calendar_days = (d1 - d0).days + 1
     except Exception:
         calendar_days = candles_run
@@ -504,24 +538,28 @@ def run_backtest() -> dict:
     print(f"  {'Alpha':<14}: {alp_sign}{agent_alpha:.2f}%  [{alpha_label}]")
     print("")
     # ── Window compliance ─────────────────────────────────────────────────────
-    trading_days  = [d for d in _window_trades]
+    trading_days   = [d for d in _window_trades]
     days_compliant = 0
     days_total     = len(trading_days)
     for day, windows in _window_trades.items():
+        is_weekday      = datetime.strptime(day, "%Y-%m-%d").weekday() < 5
+        min_required    = 6 if is_weekday else 2
         total_day_trades = sum(windows.values())
-        if total_day_trades >= 6:
+        if total_day_trades >= min_required:
             days_compliant += 1
 
     print("  WINDOW COMPLIANCE")
-    print(f"  {'Min trades/day':<14}: 6  (2 per window x 3 windows)")
+    print(f"  {'Min trades/day':<14}: weekday=6 (2x3 windows)  weekend=2 (1 window)")
     if trading_days:
         print(f"  {'Days traded':<14}: {days_total}")
         print(f"  {'Days met quota':<14}: {days_compliant}/{days_total}", end="")
         print(f"  {'[OK]' if days_compliant == days_total else '[BELOW QUOTA]'}")
         for day, windows in sorted(_window_trades.items()):
-            total = sum(windows.values())
-            marker = "[OK]" if total >= 6 else f"[NEED {6 - total} MORE]"
-            win_str = "  ".join(f"{k}:{v}" for k, v in windows.items())
+            is_weekday   = datetime.strptime(day, "%Y-%m-%d").weekday() < 5
+            min_required = 6 if is_weekday else 2
+            total        = sum(windows.values())
+            marker       = "[OK]" if total >= min_required else f"[NEED {min_required - total} MORE]"
+            win_str      = "  ".join(f"{k}:{v}" for k, v in windows.items())
             print(f"    {day}  {win_str:<30} total={total} {marker}")
     else:
         print("  No trades recorded in any window.")

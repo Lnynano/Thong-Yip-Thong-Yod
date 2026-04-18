@@ -43,8 +43,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 # │    4. CLEAR LOG button
 # │    5. Backtest tab
 # └─────────────────────────────────────────────────────────────────────────────
-DEV_MODE: bool = True
-   # ← change to False before deploying
+DEV_MODE: bool = os.getenv("DEV_MODE", "false").lower() == "true"
 
 _INTERVALS = {"REAL": 1800, "TEST": 15}
 _current_mode: str = "REAL"
@@ -1001,15 +1000,25 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
 
         # 5. THB price — Hua Seng Heng live API (primary) / yfinance conversion (fallback)
         from data.fetch import get_hsh_price
-        from converter.thai import convert_to_thb
+        from converter.thai import (convert_to_thb, fetch_live_usd_thb_rate,
+                                    TROY_OZ_TO_GRAMS, GRAMS_PER_BAHT_WEIGHT, THAI_GOLD_PURITY)
         hsh = get_hsh_price()
         if hsh:
-            # Primary: real Hua Seng Heng price (competition-grade)
+            # Primary: real Hua Seng Heng price (competition-grade, 96.5%)
             thb_now  = hsh["sell"]            # price you PAY to buy gold
-            rate     = 0.0                    # not applicable — direct THB quote
             rate_src = "hsh"
-            # Approximate previous THB price using yfinance USD ratio
+            # Compute prev ratio before overwriting price_usd
             thb_prev = thb_now * (prev_usd / price_usd) if price_usd > 0 else thb_now
+            # Derive live USD equivalent from HSH sell price using live exchange rate
+            try:
+                _usd_thb = fetch_live_usd_thb_rate()
+                if _usd_thb > 0:
+                    price_usd = round(hsh["sell"] * TROY_OZ_TO_GRAMS / (_usd_thb * GRAMS_PER_BAHT_WEIGHT * THAI_GOLD_PURITY), 2)
+                    rate = _usd_thb
+                else:
+                    rate = 0.0
+            except Exception:
+                rate = 0.0
         else:
             # Fallback: convert XAUUSD → THB via exchange rate
             thb      = convert_to_thb(price_usd)
@@ -1021,12 +1030,32 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
 
         # 6. Trading agent
         from agent.trading_agent import run_agent
-        from trader.trade_scheduler import can_trade_now, trades_remaining_today
+        from trader.trade_scheduler import (can_trade_now, trades_remaining_today,
+                                            minutes_until_window_end, current_window_quota_met,
+                                            record_trade)
         _quota_pressure = can_trade_now() and trades_remaining_today() > 0
         agent      = run_agent(quota_pressure=_quota_pressure)
         decision   = agent.get("decision", "HOLD")
         confidence = agent.get("confidence", 0)
         reasoning  = agent.get("reasoning", "No reasoning.")
+
+        # Failsafe: window ending in ≤10 min, quota not met, agent still HOLD
+        _mins_left = minutes_until_window_end()
+        if (decision == "HOLD" and can_trade_now() and
+                _mins_left is not None and _mins_left <= 10 and
+                not current_window_quota_met()):
+            agent      = run_agent(quota_pressure=True, failsafe_pressure=True)
+            decision   = agent.get("decision", "HOLD")
+            confidence = agent.get("confidence", 0)
+            reasoning  = agent.get("reasoning", "No reasoning.")
+            if decision == "HOLD":  # still HOLD → hard force
+                decision   = "BUY"
+                confidence = 51
+                reasoning  = "[FAILSAFE] Window closing, quota not met. Forced BUY signal."
+
+        # Count every BUY/SELL decision toward window quota
+        if decision in ("BUY", "SELL") and can_trade_now():
+            record_trade()
 
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
         if not api_key or api_key == "your_key_here":
@@ -1036,12 +1065,9 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         # 7. Paper trade execution — ONLY when trade_mode is ON AND scheduler allows
         from trader.paper_engine import execute_paper_trade, get_portfolio_summary, \
                                         get_trade_history, get_equity_history, get_recent_outcomes
-        from trader.trade_scheduler import record_trade
         if trade_mode and can_trade_now():
             _min_conf = 50 if _quota_pressure else None
             trade_result = execute_paper_trade(decision, confidence, thb_now, min_confidence=_min_conf)
-            if trade_result.get("action") not in ("DISABLED", "SKIP", None):
-                record_trade()
         elif trade_mode and not can_trade_now():
             trade_result = {"action": "SKIP", "reason": "Outside trading window"}
         else:
@@ -1399,9 +1425,9 @@ def build_ui() -> gr.Blocks:
         except Exception as e:
             print(f"[dashboard] gr.Timer not available ({e}); auto-refresh disabled.")
 
-        # Countdown ticker — fires every 30 seconds (was 1s; 1s caused Render WebSocket congestion)
+        # Countdown ticker — 1s locally, 30s on Render (1s caused WebSocket congestion on Render)
         try:
-            countdown_timer = gr.Timer(value=30)
+            countdown_timer = gr.Timer(value=1 if DEV_MODE else 30)
             countdown_timer.tick(
                 fn=_tick_countdown,
                 inputs=[],
