@@ -123,7 +123,7 @@ def verify_environment() -> bool:
 
     fee_pct  = os.getenv("TRADE_FEE_PCT", "0.005")
     fee_flat = os.getenv("TRADE_FEE_FLAT_THB", "0")
-    print(f"  OK  TRADE_FEE_PCT: {float(fee_pct)*100:.2f}%  "
+    print(f"  [OK]  TRADE_FEE_PCT: {float(fee_pct)*100:.2f}%  "
           f"TRADE_FEE_FLAT_THB: {fee_flat} THB")
 
     print(f"  [OK] TRADE_LOOP_INTERVAL_SEC: {_LOOP_INTERVAL}s "
