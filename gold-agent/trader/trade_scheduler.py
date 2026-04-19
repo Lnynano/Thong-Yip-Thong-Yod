@@ -27,12 +27,14 @@ _STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "scheduler_s
 # Each window: (start_hour_min, end_hour_min, quota)
 # Represented as (h*60+m) minutes-since-midnight for easy comparison
 
-# Window 1 on weekdays is split (00:00-02:00 + 06:00-11:59) but shares 2-trade quota
-# Simplify: treat as one logical window with 2 slots
+# M-F windows (Thai time):
+#   morning:   06:00-11:59
+#   afternoon: 12:00-17:59
+#   evening:   18:00-23:59 + 00:00-02:00 (next calendar day, same logical window)
 _WEEKDAY_LOGICAL = [
     {
         "name": "morning",
-        "ranges": [(0*60+0, 2*60+0), (6*60+0, 11*60+59)],
+        "ranges": [(6*60+0, 11*60+59)],
         "min_trades": 2,
     },
     {
@@ -42,7 +44,7 @@ _WEEKDAY_LOGICAL = [
     },
     {
         "name": "evening",
-        "ranges": [(18*60+0, 23*60+59)],
+        "ranges": [(18*60+0, 23*60+59), (0*60+0, 2*60+0)],
         "min_trades": 2,
     },
 ]

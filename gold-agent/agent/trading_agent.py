@@ -154,7 +154,7 @@ TOOLS = [
 # ─────────────────────────────────────────────────────────────
 # Tool Executor
 # ─────────────────────────────────────────────────────────────
-def _execute_tool(tool_name: str, tool_input: dict) -> str:
+def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = None) -> str:
     """
     Execute a tool call and return a structured JSON string result.
 
@@ -240,138 +240,145 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
 
             # ── BUY/SELL Score (0-5 each) ─────────────────────────────────────
             # Pre-score signals so the agent has quantified hints, reduces hallucination
+            _cfg       = _tool_config or {}
+            use_macd   = _cfg.get("use_macd",        True)
+            use_bb     = _cfg.get("use_bb",           True)
+            use_news   = _cfg.get("use_news",         True)
+            use_dxy_vix= _cfg.get("use_dxy_vix",      True)
+            use_h1_mtf = _cfg.get("use_h1_mtf",       True)
+            use_daily  = _cfg.get("use_daily_bias",   True)
+            use_volume = _cfg.get("use_volume_spike", True)
+
             buy_score  = 0
             sell_score = 0
 
-            # RSI
-            if rsi < 30:   buy_score  += 2   # oversold = strong buy
+            # RSI (always on — core signal)
+            if rsi < 30:   buy_score  += 2
             elif rsi < 45: buy_score  += 1
-            if rsi > 70:   sell_score += 2   # overbought = strong sell
+            if rsi > 70:   sell_score += 2
             elif rsi > 60: sell_score += 1
 
             # MACD histogram
-            if macd["histogram"] > 0:  buy_score  += 1
-            else:                      sell_score += 1
+            if use_macd:
+                if macd["histogram"] > 0:  buy_score  += 1
+                else:                      sell_score += 1
 
             # Bollinger Bands %B
-            if bb["percent_b"] < 0.2:  buy_score  += 1   # near lower band
-            elif bb["percent_b"] > 0.8: sell_score += 1  # near upper band
+            if use_bb:
+                if bb["percent_b"] < 0.2:   buy_score  += 1
+                elif bb["percent_b"] > 0.8: sell_score += 1
 
-            # MACD crossover (macd line vs signal line)
-            if macd["macd"] > macd["signal"]:  buy_score  += 1
-            else:                               sell_score += 1
+            # MACD crossover
+            if use_macd:
+                if macd["macd"] > macd["signal"]:  buy_score  += 1
+                else:                               sell_score += 1
 
             # Daily market bias (cached — free, runs once/day)
             daily_bias = "Sideways"
             daily_strength = "Weak"
-            try:
-                from agent.daily_market_agent import get_daily_market
-                dm = get_daily_market()
-                daily_bias     = dm.get("daily_trend", "Sideways")
-                daily_strength = dm.get("trend_strength", "Weak")
-                daily_summary  = dm.get("daily_summary", "")
-                if daily_bias == "Uptrend":
-                    buy_score  += 1 if daily_strength in ("Strong", "Moderate") else 0
-                elif daily_bias == "Downtrend":
-                    sell_score += 1 if daily_strength in ("Strong", "Moderate") else 0
-            except Exception:
-                daily_summary = ""
+            daily_summary  = ""
+            if use_daily:
+                try:
+                    from agent.daily_market_agent import get_daily_market
+                    dm = get_daily_market()
+                    daily_bias     = dm.get("daily_trend", "Sideways")
+                    daily_strength = dm.get("trend_strength", "Weak")
+                    daily_summary  = dm.get("daily_summary", "")
+                    if daily_bias == "Uptrend":
+                        buy_score  += 1 if daily_strength in ("Strong", "Moderate") else 0
+                    elif daily_bias == "Downtrend":
+                        sell_score += 1 if daily_strength in ("Strong", "Moderate") else 0
+                except Exception:
+                    pass
 
             # ── News sentiment strength (weighted scoring) ────────────────────
-            try:
-                from news.sentiment import get_gold_news, get_sentiment_strength
-                _headlines = get_gold_news(5)
-                news_str = get_sentiment_strength(_headlines)
-                if news_str["sentiment"] == "BULLISH":
-                    buy_score += 2 if news_str["strength"] == "STRONG" else 1
-                elif news_str["sentiment"] == "BEARISH":
-                    sell_score += 2 if news_str["strength"] == "STRONG" else 1
-            except Exception:
-                pass
+            if use_news:
+                try:
+                    from news.sentiment import get_gold_news, get_sentiment_strength
+                    _headlines = get_gold_news(5)
+                    news_str = get_sentiment_strength(_headlines)
+                    if news_str["sentiment"] == "BULLISH":
+                        buy_score += 2 if news_str["strength"] == "STRONG" else 1
+                    elif news_str["sentiment"] == "BEARISH":
+                        sell_score += 2 if news_str["strength"] == "STRONG" else 1
+                except Exception:
+                    pass
 
             # ── Volume spike detection ────────────────────────────────────────
-            try:
-                vol = df["Volume"].tail(20)
-                if len(vol) >= 20:
-                    avg_vol = vol.iloc[:-1].mean()
-                    latest_vol = float(vol.iloc[-1])
-                    if avg_vol > 0 and latest_vol > avg_vol * 1.5:
-                        # Volume spike = something big happening, boost dominant signal
-                        if buy_score > sell_score:
-                            buy_score += 1
-                        elif sell_score > buy_score:
-                            sell_score += 1
-            except Exception:
-                pass
+            if use_volume:
+                try:
+                    vol = df["Volume"].tail(20)
+                    if len(vol) >= 20:
+                        avg_vol = vol.iloc[:-1].mean()
+                        latest_vol = float(vol.iloc[-1])
+                        if avg_vol > 0 and latest_vol > avg_vol * 1.5:
+                            if buy_score > sell_score:
+                                buy_score += 1
+                            elif sell_score > buy_score:
+                                sell_score += 1
+                except Exception:
+                    pass
 
             # ── DXY + VIX macro indicators ───────────────────────────────────
             dxy_context = {}
             vix_context = {}
-            try:
-                from data.fetch import get_macro_indicators
-                macro = get_macro_indicators()
-
-                dxy = macro.get("dxy", {})
-                if dxy:
-                    if dxy["signal"] == "BEARISH_GOLD":
-                        sell_score += 1
-                    elif dxy["signal"] == "BULLISH_GOLD":
-                        buy_score  += 1
-                    dxy_context = {
-                        "value"     : dxy["value"],
-                        "change_pct": dxy["change_pct"],
-                        "signal"    : dxy["signal"],
-                        "note"      : "DXY up = gold headwind. DXY down = gold tailwind.",
-                    }
-
-                vix = macro.get("vix", {})
-                if vix:
-                    if "BULLISH_GOLD" in vix["signal"]:
-                        buy_score += 1
-                    vix_context = {
-                        "value"     : vix["value"],
-                        "change_pct": vix["change_pct"],
-                        "signal"    : vix["signal"],
-                        "note"      : "VIX>20=fear rising=gold safe-haven demand. VIX<15=risk-on=gold neutral.",
-                    }
-            except Exception as e:
-                print(f"[trading_agent.py] DXY/VIX fetch failed (non-critical): {e}")
+            if use_dxy_vix:
+                try:
+                    from data.fetch import get_macro_indicators
+                    macro = get_macro_indicators()
+                    dxy = macro.get("dxy", {})
+                    if dxy:
+                        if dxy["signal"] == "BEARISH_GOLD":
+                            sell_score += 1
+                        elif dxy["signal"] == "BULLISH_GOLD":
+                            buy_score  += 1
+                        dxy_context = {
+                            "value"     : dxy["value"],
+                            "change_pct": dxy["change_pct"],
+                            "signal"    : dxy["signal"],
+                            "note"      : "DXY up = gold headwind. DXY down = gold tailwind.",
+                        }
+                    vix = macro.get("vix", {})
+                    if vix:
+                        if "BULLISH_GOLD" in vix["signal"]:
+                            buy_score += 1
+                        vix_context = {
+                            "value"     : vix["value"],
+                            "change_pct": vix["change_pct"],
+                            "signal"    : vix["signal"],
+                            "note"      : "VIX>20=fear rising=gold safe-haven demand. VIX<15=risk-on=gold neutral.",
+                        }
+                except Exception as e:
+                    print(f"[trading_agent.py] DXY/VIX fetch failed (non-critical): {e}")
 
             # Multi-timeframe: H1 context + confirmation filter
             h1_context = {}
-            mtf_confirmed = True   # assume confirmed if H1 unavailable
-            try:
-                from data.fetch import get_gold_price_intraday
-                df_h1 = get_gold_price_intraday(interval="1h", days=5)
-                if not df_h1.empty and len(df_h1) >= 15:
-                    h1_rsi  = calculate_rsi(df_h1, period=14)
-                    h1_macd = calculate_macd(df_h1)
-                    h1_trend = "BULLISH" if h1_macd["histogram"] > 0 else "BEARISH"
-                    h1_rsi_sig = ("OVERBOUGHT" if h1_rsi > 70
-                                  else "OVERSOLD" if h1_rsi < 30
-                                  else "NEUTRAL")
-
-                    # MTF confirmation: D1 and H1 must agree
-                    # If D1 says buy (buy_score > sell_score) but H1 RSI is overbought -> conflict
-                    # If D1 says sell (sell_score > buy_score) but H1 RSI is oversold -> conflict
-                    if buy_score > sell_score and h1_rsi > 65:
-                        mtf_confirmed = False   # D1 bullish but H1 already stretched
-                    elif sell_score > buy_score and h1_rsi < 35:
-                        mtf_confirmed = False   # D1 bearish but H1 already oversold
-
-                    h1_context = {
-                        "interval": "H1",
-                        "bars": len(df_h1),
-                        "rsi": round(h1_rsi, 2),
-                        "rsi_signal": h1_rsi_sig,
-                        "macd_histogram": h1_macd["histogram"],
-                        "trend": h1_trend,
-                        "mtf_confirmed": mtf_confirmed,
-                        "note": ("H1 CONFIRMS D1 signal" if mtf_confirmed
-                                 else "H1 CONFLICTS with D1 - reduce conviction"),
-                    }
-            except Exception as e:
-                print(f"[trading_agent.py] H1 MTF fetch failed (non-critical): {e}")
+            mtf_confirmed = True
+            if use_h1_mtf:
+                try:
+                    from data.fetch import get_gold_price_intraday
+                    df_h1 = get_gold_price_intraday(interval="1h", days=5)
+                    if not df_h1.empty and len(df_h1) >= 15:
+                        h1_rsi  = calculate_rsi(df_h1, period=14)
+                        h1_macd = calculate_macd(df_h1)
+                        h1_trend = "BULLISH" if h1_macd["histogram"] > 0 else "BEARISH"
+                        h1_rsi_sig = ("OVERBOUGHT" if h1_rsi > 70
+                                      else "OVERSOLD" if h1_rsi < 30
+                                      else "NEUTRAL")
+                        if buy_score > sell_score and h1_rsi > 65:
+                            mtf_confirmed = False
+                        elif sell_score > buy_score and h1_rsi < 35:
+                            mtf_confirmed = False
+                        h1_context = {
+                            "interval": "H1", "bars": len(df_h1),
+                            "rsi": round(h1_rsi, 2), "rsi_signal": h1_rsi_sig,
+                            "macd_histogram": h1_macd["histogram"], "trend": h1_trend,
+                            "mtf_confirmed": mtf_confirmed,
+                            "note": ("H1 CONFIRMS D1 signal" if mtf_confirmed
+                                     else "H1 CONFLICTS with D1 - reduce conviction"),
+                        }
+                except Exception as e:
+                    print(f"[trading_agent.py] H1 MTF fetch failed (non-critical): {e}")
 
             # Cap scores to 0-5 range before comparison
             buy_score  = min(buy_score, 5)
@@ -562,7 +569,7 @@ def _parse_json_with_retry(text: str, attempt: int = 1) -> dict | None:
 # ─────────────────────────────────────────────────────────────
 # Main Agent Function  (ReAct loop)
 # ─────────────────────────────────────────────────────────────
-def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False) -> dict:
+def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, config: dict | None = None) -> dict:
     """
     Run the gold trading ReAct agent.
 
@@ -710,7 +717,7 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False) -> 
                     print(f"[trading_agent.py] TOOL CALL: {tool_name} | input={tool_input}")
 
                     # ReAct: aₖ → environment → oₖ
-                    result = _execute_tool(tool_name, tool_input)
+                    result = _execute_tool(tool_name, tool_input, _tool_config=config)
                     result_preview = result[:150] + "..." if len(result) > 150 else result
                     print(f"[trading_agent.py] OBSERVATION: {result_preview}")
 

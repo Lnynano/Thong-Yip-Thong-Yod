@@ -89,18 +89,55 @@ def _set_mode(mode: str) -> None:
     _save_ui_state(refresh_mode=mode)
 
 
-def _tick_countdown() -> str:
-    """Lightweight 1-second tick — only returns the countdown string."""
-    interval  = _INTERVALS.get(_current_mode, 300)
-    elapsed   = time.time() - _last_refresh_time
-    remaining = max(0, interval - int(elapsed))
-    mins      = remaining // 60
-    secs      = remaining % 60
-    filled    = int((elapsed / interval) * 20)
-    filled    = min(filled, 20)
-    bar       = "#" * filled + "-" * (20 - filled)   # ASCII-safe, renders in any font
+def _get_countdown_html() -> str:
+    """Return HTML with data attributes — JS (injected via gr.Blocks js=) reads these and ticks client-side."""
+    interval = _INTERVALS.get(_current_mode, 300)
+    next_at  = _last_refresh_time + interval
+    return (
+        f'<div style="font-family:monospace;color:#aaa;padding:4px 8px;font-size:13px;">'
+        f'<span id="cd-text" data-next-at="{next_at:.3f}" data-total="{interval}">'
+        f'Next refresh in  --:-- [--------------------]</span></div>'
+    )
 
-    return f"Next refresh in  {mins}:{secs:02d}  [{bar}] "
+
+COUNTDOWN_JS = """
+() => {
+  var _cdLastNextAt = null;
+
+  function startCountdown() {
+    var el = document.getElementById('cd-text');
+    if (!el) return false;
+    var nextAt = parseFloat(el.getAttribute('data-next-at') || '0');
+    var total  = parseFloat(el.getAttribute('data-total')   || '1800');
+    if (!nextAt) return false;
+    if (window._cdTimer) clearInterval(window._cdTimer);
+    function tick() {
+      var el = document.getElementById('cd-text');
+      if (!el) return;
+      var rem    = Math.max(0, Math.round(nextAt - Date.now() / 1000));
+      var m      = Math.floor(rem / 60), s = rem % 60;
+      var filled = Math.min(20, Math.floor((total - rem) / total * 20));
+      var bar    = '#'.repeat(filled) + '-'.repeat(20 - filled);
+      el.textContent = 'Next refresh in  ' + m + ':' + (s < 10 ? '0' : '') + s + '  [' + bar + '] ';
+    }
+    tick();
+    window._cdTimer = setInterval(tick, 1000);
+    return true;
+  }
+
+  function tryStart() {
+    if (!startCountdown()) setTimeout(tryStart, 500);
+  }
+  tryStart();
+
+  new MutationObserver(function() {
+    var el = document.getElementById('cd-text');
+    if (!el) return;
+    var na = el.getAttribute('data-next-at');
+    if (na && na !== _cdLastNextAt) { _cdLastNextAt = na; startCountdown(); }
+  }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-next-at'] });
+}
+"""
 
 # ─────────────────────────────────────────────────────────────
 # Dark PNS-style CSS
@@ -926,13 +963,13 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         trade_mode: When True, paper trades are executed automatically.
                     When False, analysis runs but NO trades are placed.
 
-    Returns 18 values:
+    Returns 19 values:
         price_html, decision_html_out,
         last_updated, price_chart_fig, rsi_chart_fig, rsi_str, macd_str,
         portfolio_html, equity_chart, outcome_bar_html,
         trade_table_html, news_html_out, log_df,
         indicators_str, status, trade_mode_status_html,
-        dxy_str, vix_str
+        dxy_str, vix_str, countdown_html
     """
     global _last_refresh_time
     _last_refresh_time = time.time()   # reset countdown
@@ -1162,6 +1199,7 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
             status,
             tm_html,
             dxy_str, vix_str,
+            _get_countdown_html(),
         )
 
     except Exception as e:
@@ -1202,6 +1240,7 @@ def _error_outputs(msg: str, trade_mode: bool = False) -> tuple:
         msg,
         _trade_mode_html(trade_mode),
         "N/A", "N/A",
+        _get_countdown_html(),
     )
 
 
@@ -1218,7 +1257,7 @@ def build_ui() -> gr.Blocks:
     # Apply saved refresh mode to global so countdown starts correctly
     _set_mode(_init_refresh_mode)
 
-    with gr.Blocks(title="Thong Yip Thong Yod") as demo:
+    with gr.Blocks(title="Thong Yip Thong Yod", js=COUNTDOWN_JS) as demo:
 
         # ── Header ──────────────────────────────────────────
         gr.HTML("""
@@ -1278,14 +1317,8 @@ def build_ui() -> gr.Blocks:
             last_updated = gr.Textbox(value="Loading...", interactive=False,
                                       show_label=False, scale=5, max_lines=1)
 
-        # Countdown bar — updated every second by a lightweight timer
-        countdown_box = gr.Textbox(
-            value=_tick_countdown(),
-            show_label=False,
-            interactive=False,
-            max_lines=1,
-            elem_id="countdown-box",
-        )
+        # Countdown bar — JS ticks every second client-side, server syncs every 60s
+        countdown_box = gr.HTML(value=_get_countdown_html(), elem_id="countdown-box")
 
         gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
 
@@ -1385,6 +1418,7 @@ def build_ui() -> gr.Blocks:
             status_box,
             trade_mode_status,
             dxy_box, vix_box,
+            countdown_box,
         ]
 
         # ── Wire up refresh button, page load, and timer ─────
@@ -1404,7 +1438,7 @@ def build_ui() -> gr.Blocks:
         # Mode selector wires to module-level _current_mode
         mode_radio.change(fn=_set_mode, inputs=[mode_radio], outputs=[])
 
-        # Two timers: REAL (300s) and TEST (15s).
+        # Two timers: REAL (1800s) and TEST (15s).
         # Each checks _current_mode before running — only the active mode fires.
         def _run_if_real(trade_mode):
             if _current_mode != "REAL":
@@ -1425,11 +1459,11 @@ def build_ui() -> gr.Blocks:
         except Exception as e:
             print(f"[dashboard] gr.Timer not available ({e}); auto-refresh disabled.")
 
-        # Countdown ticker — 1s locally, 30s on Render (1s caused WebSocket congestion on Render)
+        # Countdown sync — 60s server sync to correct drift; JS does real second-by-second ticking
         try:
-            countdown_timer = gr.Timer(value=1 if DEV_MODE else 30)
+            countdown_timer = gr.Timer(value=60)
             countdown_timer.tick(
-                fn=_tick_countdown,
+                fn=_get_countdown_html,
                 inputs=[],
                 outputs=[countdown_box],
             )
