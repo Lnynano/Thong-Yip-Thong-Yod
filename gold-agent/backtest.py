@@ -156,7 +156,7 @@ def _write_trade_log(trades: list[dict]) -> None:
 
 # ── Main backtest ─────────────────────────────────────────────────────────────
 
-def run_backtest() -> dict:
+def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
     """
     Run the backtest and return structured results.
 
@@ -219,6 +219,11 @@ def run_backtest() -> dict:
     total_candles = len(df_full) - MIN_ROWS + 1
 
     # ── Header ────────────────────────────────────────────────────────────────
+    _cfg = config or {}
+    _flag_names = ["use_macd", "use_bb", "use_news", "use_dxy_vix", "use_h1_mtf", "use_daily_bias", "use_volume_spike"]
+    _on  = [f for f in _flag_names if _cfg.get(f, True)]
+    _off = [f for f in _flag_names if not _cfg.get(f, True)]
+
     print("")
     print("=" * 60)
     print("  GOLD AGENT BACKTEST")
@@ -226,6 +231,9 @@ def run_backtest() -> dict:
     print(f"  Period   : {df_full.index[MIN_ROWS-1].date()} -> {df_full.index[-1].date()}")
     print(f"  Interval : {interval_used}  |  Candles : {total_candles}")
     print(f"  Capital  : B{INITIAL_BALANCE_THB:,.0f}  |  Gate : {CONFIDENCE_GATE}%  |  TP : +{TAKE_PROFIT_PCT*100:.1f}%  SL : {STOP_LOSS_PCT*100:.1f}%")
+    print(f"  Cache    : {'YES (same price data)' if use_cache else 'NO (fresh fetch)'}")
+    print(f"  ON  ({len(_on)}) : {', '.join(_on) if _on else '—'}")
+    print(f"  OFF ({len(_off)}) : {', '.join(_off) if _off else '—'}")
     print("=" * 60)
     print("")
 
@@ -310,13 +318,13 @@ def run_backtest() -> dict:
             continue
 
         # Quota pressure: check if this window still needs trades
-        date_str_today = str(date.date())
+        date_str_today = _thai_date_str(date)
         _window_trades.setdefault(date_str_today, {})
         _window_used = _window_trades[date_str_today].get(candle_window, 0)
         _quota_pressure = _window_used < 2  # min 2 per window
 
         with _quiet(), patch.object(fetch_module, "get_gold_price", return_value=window):
-            agent = run_agent(quota_pressure=_quota_pressure)
+            agent = run_agent(quota_pressure=_quota_pressure, config=config)
 
         decision   = agent["decision"]
         confidence = agent["confidence"]
@@ -346,7 +354,7 @@ def run_backtest() -> dict:
                 _mins_left is not None and _mins_left <= 10 and
                 _window_used < 2):
             with _quiet(), patch.object(fetch_module, "get_gold_price", return_value=window):
-                agent = run_agent(quota_pressure=True, failsafe_pressure=True)
+                agent = run_agent(quota_pressure=True, failsafe_pressure=True, config=config)
             decision   = agent["decision"]
             confidence = agent["confidence"]
             reasoning  = agent["reasoning"]
@@ -382,7 +390,7 @@ def run_backtest() -> dict:
                 size_bw  = gross / price_thb
                 balance_thb  -= cost
                 open_position = {
-                    "entry_date"   : str(date.date()),
+                    "entry_date"   : _to_thai(date).strftime("%Y-%m-%d %H:%M"),
                     "entry_price"  : price_thb,
                     "highest_price": price_thb,
                     "size_bw"      : size_bw,
@@ -414,7 +422,7 @@ def run_backtest() -> dict:
             balance_thb   += net_proceeds
             trade = {
                 "entry_date" : open_position["entry_date"],
-                "exit_date"  : str(date.date()),
+                "exit_date"  : _to_thai(date).strftime("%Y-%m-%d %H:%M"),
                 "entry_price": open_position["entry_price"],
                 "exit_price" : price_thb,
                 "size_bw"    : round(open_position["size_bw"], 6),
@@ -443,7 +451,7 @@ def run_backtest() -> dict:
 
         daily_log.append({
             "candle"    : candle_no,
-            "date"      : str(date.date()),
+            "date"      : _to_thai(date).strftime("%Y-%m-%d %H:%M"),
             "price_usd" : price_usd,
             "price_thb" : price_thb,
             "decision"  : decision,
