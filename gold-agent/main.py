@@ -13,7 +13,7 @@ Key design decisions:
   - Deterministic pipeline : fetch, indicators, converter, risk
   - Stochastic component   : trading_agent only
   - Safety bounds          : validated in trading_agent before display
-  - Background scheduler   : trades fire independently of browser sessions
+  - Background scheduler   : APScheduler handles background execution reliably
   - AGENTS.md              : see AGENTS.md for AI-readable project rules
 
 Usage:
@@ -24,8 +24,6 @@ The Gradio dashboard launches on http://localhost:7860
 
 import sys
 import os
-import threading
-import time
 
 # Ensure all subpackages are importable regardless of working directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,73 +34,12 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-# ─────────────────────────────────────────────────────────────
-# Background scheduler config
-# ─────────────────────────────────────────────────────────────
-# How often the background thread wakes up to check trade windows.
-# Kept at 5 min to mirror the dashboard auto-refresh cadence.
-# Set TRADE_LOOP_INTERVAL_SEC in .env to override.
-_LOOP_INTERVAL = int(os.getenv("TRADE_LOOP_INTERVAL_SEC", "300"))
-
-# Shared flag -set to True by the Trade Mode toggle in the dashboard.
-# The background thread reads this flag before executing trades.
-_trade_mode_enabled = threading.Event()
-
-
-def set_trade_mode(enabled: bool) -> None:
-    """Called by the dashboard toggle to enable/disable auto-trading."""
-    if enabled:
-        _trade_mode_enabled.set()
-    else:
-        _trade_mode_enabled.clear()
-
-
-def _background_trade_loop() -> None:
-    """
-    Background thread: fires the trade pipeline only when trade mode is ON
-    and inside an active trading window. Otherwise does a cheap price fetch
-    to keep the process warm on Render without burning LLM API credits.
-    """
-    print("[scheduler] Background trade loop started "
-          f"(interval={_LOOP_INTERVAL}s)")
-
-    # Wait 10s for the app to finish initialising before first run
-    time.sleep(10)
-
-    while True:
-        try:
-            trade_mode = _trade_mode_enabled.is_set()
-
-            if trade_mode:
-                from trader.trade_scheduler import can_trade_now
-                if can_trade_now():
-                    print("[scheduler] Trade window open + trade mode ON — running full analysis")
-                    from ui.dashboard import run_full_analysis
-                    run_full_analysis(trade_mode=True)
-                else:
-                    print("[scheduler] Trade mode ON but outside window — skipping LLM call")
-            else:
-                # Keep-alive: cheap price fetch only, no LLM calls
-                try:
-                    from data.fetch import get_gold_price
-                    df = get_gold_price()
-                    price = float(df["Close"].iloc[-1]) if not df.empty else 0
-                    print(f"[scheduler] Keep-alive ping — price ${price:.2f} (no LLM call)")
-                except Exception:
-                    pass
-
-        except Exception as e:
-            print(f"[scheduler] Cycle error (will retry next interval): {e}")
-
-        time.sleep(_LOOP_INTERVAL)
-
-
 def verify_environment() -> bool:
     """
     Verify that required environment variables are configured.
     """
     print("=" * 60)
-    print("  Gold Trading Agent -Environment Check")
+    print("  Gold Trading Agent - Environment Check")
     print("=" * 60)
 
     api_key = os.getenv("OPENAI_API_KEY", "")
@@ -123,14 +60,11 @@ def verify_environment() -> bool:
 
     fee_pct  = os.getenv("TRADE_FEE_PCT", "0.005")
     fee_flat = os.getenv("TRADE_FEE_FLAT_THB", "0")
-    print(f"  OK  TRADE_FEE_PCT: {float(fee_pct)*100:.2f}%  "
+    print(f"  [OK] TRADE_FEE_PCT: {float(fee_pct)*100:.2f}%  "
           f"TRADE_FEE_FLAT_THB: {fee_flat} THB")
 
-    print(f"  [OK] TRADE_LOOP_INTERVAL_SEC: {_LOOP_INTERVAL}s "
-          f"({'default' if _LOOP_INTERVAL == 300 else 'custom'})")
     print("=" * 60)
     return True
-
 
 def run_cli_test():
     """
@@ -170,7 +104,7 @@ def run_cli_test():
         print("\n4. Converting to THB (96.5% Thai gold purity)...")
         from converter.thai import convert_to_thb
         thb = convert_to_thb(price)
-        print(f"   OK  {thb['thb_per_gram']:.2f} THB/g (pure) | "
+        print(f"   [OK] {thb['thb_per_gram']:.2f} THB/g (pure) | "
               f"{thb['thb_per_baht_weight_thai']:.2f} THB/baht-wt (96.5% Thai)")
     except Exception as e:
         print(f"   [X] Converter error: {e}")
@@ -191,47 +125,31 @@ def run_cli_test():
 
     print("\n[main.py] CLI test complete. Launching Gradio UI...\n")
 
-
 def main():
     """
     Main entry point: verifies environment, runs quick test,
-    starts the background scheduler, then launches the UI.
+    starts the APScheduler background loop, then launches the UI.
     """
     import gradio as gr
 
     verify_environment()
     run_cli_test()
 
-    # ── Start background trade loop ────────────────────────────────────────
-    scheduler_thread = threading.Thread(
-        target=_background_trade_loop,
-        name="trade-scheduler",
-        daemon=True,   # dies automatically when main process exits
-    )
-    scheduler_thread.start()
-    print(f"[main.py] Background scheduler started (thread: {scheduler_thread.name})")
-
-    # ── Launch Gradio dashboard ────────────────────────────────────────────
     try:
-        from ui.dashboard import build_ui, PNS_CSS
+        from ui.dashboard import build_ui, PNS_CSS, start_scheduler
+        
+        # ── Start APScheduler background loop ──────────────────────────────────
+        start_scheduler()
+        print("[main.py] APScheduler background loop started.")
+
+        # ── Launch Gradio dashboard ────────────────────────────────────────────
         demo = build_ui()
-
-        # Wire the dashboard Trade Mode toggle to the shared flag so the
-        # background thread picks up changes immediately.
-        # The dashboard exposes _trade_mode_toggle via the gr.State mechanism;
-        # we hook into it by monkey-patching after build.
-        try:
-            from ui import dashboard as _dash_mod
-            _dash_mod._set_trade_mode_callback = set_trade_mode
-        except Exception:
-            pass  # non-critical -background loop uses its own flag
-
         port = int(os.environ.get("PORT", 7860))
 
         print("\n" + "=" * 60)
         print("  Gold Trading Agent is starting!")
         print(f"  Dashboard: http://localhost:{port}")
-        print("  Background scheduler: RUNNING")
+        print("  Background scheduler: RUNNING (APScheduler)")
         print("  Press Ctrl+C to stop.")
         print("=" * 60 + "\n")
 
@@ -252,7 +170,6 @@ def main():
     except Exception as e:
         print(f"\n[X] Failed to launch dashboard: {e}")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
