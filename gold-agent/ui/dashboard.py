@@ -81,11 +81,12 @@ def _save_ui_state(**kwargs) -> None:
         pass  # non-critical
 
 
-def _set_mode(mode: str) -> None:
-    """Switch between REAL and TEST mode; resets countdown."""
+def _set_mode(mode: str, reset_timer: bool = True) -> None:
+    """Switch between REAL and TEST mode; optionally resets countdown."""
     global _current_mode, _last_refresh_time
     _current_mode = mode
-    _last_refresh_time = time.time()
+    if reset_timer:
+        _last_refresh_time = time.time()
     _save_ui_state(refresh_mode=mode)
 
 
@@ -103,13 +104,23 @@ def _get_countdown_html() -> str:
 COUNTDOWN_JS = """
 () => {
   var _cdLastNextAt = null;
+  var LS_KEY = 'tyty_cd_state';
 
-  function startCountdown() {
-    var el = document.getElementById('cd-text');
-    if (!el) return false;
-    var nextAt = parseFloat(el.getAttribute('data-next-at') || '0');
-    var total  = parseFloat(el.getAttribute('data-total')   || '1800');
+  function saveToStorage(nextAt, total) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify({nextAt: nextAt, total: total})); } catch(e) {}
+  }
+
+  function loadFromStorage() {
+    try {
+      var d = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+      if (d && d.nextAt > Date.now() / 1000) return d;
+    } catch(e) {}
+    return null;
+  }
+
+  function startCountdown(nextAt, total) {
     if (!nextAt) return false;
+    saveToStorage(nextAt, total);
     if (window._cdTimer) clearInterval(window._cdTimer);
     function tick() {
       var el = document.getElementById('cd-text');
@@ -126,7 +137,16 @@ COUNTDOWN_JS = """
   }
 
   function tryStart() {
-    if (!startCountdown()) setTimeout(tryStart, 500);
+    var el = document.getElementById('cd-text');
+    if (el) {
+      var nextAt = parseFloat(el.getAttribute('data-next-at') || '0');
+      var total  = parseFloat(el.getAttribute('data-total')   || '1800');
+      if (nextAt) { startCountdown(nextAt, total); return; }
+    }
+    // Fall back to localStorage so countdown continues after tab navigation
+    var stored = loadFromStorage();
+    if (stored) { startCountdown(stored.nextAt, stored.total); return; }
+    setTimeout(tryStart, 500);
   }
   tryStart();
 
@@ -134,7 +154,11 @@ COUNTDOWN_JS = """
     var el = document.getElementById('cd-text');
     if (!el) return;
     var na = el.getAttribute('data-next-at');
-    if (na && na !== _cdLastNextAt) { _cdLastNextAt = na; startCountdown(); }
+    if (na && na !== _cdLastNextAt) {
+      _cdLastNextAt = na;
+      var total = parseFloat(el.getAttribute('data-total') || '1800');
+      startCountdown(parseFloat(na), total);
+    }
   }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-next-at'] });
 }
 """
@@ -1263,8 +1287,8 @@ def build_ui() -> gr.Blocks:
     _saved = _load_ui_state()
     _init_trade_mode: bool = _saved["trade_mode"]
     _init_refresh_mode: str = _saved["refresh_mode"]
-    # Apply saved refresh mode to global so countdown starts correctly
-    _set_mode(_init_refresh_mode)
+    # Apply saved refresh mode without resetting the countdown clock
+    _set_mode(_init_refresh_mode, reset_timer=False)
 
     with gr.Blocks(title="Thong Yip Thong Yod", js=COUNTDOWN_JS) as demo:
 
