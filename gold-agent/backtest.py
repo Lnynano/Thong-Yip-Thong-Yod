@@ -630,4 +630,4 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
 
 
 if __name__ == "__main__":
-    run_backtest()
+    run_backtest(config= { "use_cache": True , "use_macd": False, "use_bb": False, "use_news": False, "use_dxy_vix": False, "use_h1_mtf": False, "use_daily_bias": False, "use_volume_spike": False })
