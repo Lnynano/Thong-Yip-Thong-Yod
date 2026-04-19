@@ -27,7 +27,7 @@ load_dotenv()
 # ROLE / CONSTRAINTS / INSTRUCTIONS / OUTPUT FORMAT
 # ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """# ROLE
-You are an institutional quantitative trading agent specializing in Gold (XAUUSD).
+You are an institutional quantitative trading agent specializing in Thai Gold 96.5%.
 You combine mathematical technical indicators with macroeconomic news sentiment.
 Your analysis is used by Thai retail investors, so you also consider Thai Baht pricing.
 
