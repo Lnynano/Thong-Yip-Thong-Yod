@@ -1143,6 +1143,15 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         # Send to professor's trade log API (competition requirement)
         send_trade_log(action=decision, price_thb=thb_now,
                        reason=reasoning, confidence=confidence)
+
+        # Discord notification
+        try:
+            from notifier.discord_notify import send_signal
+            will_trade = decision in ("BUY", "SELL") and confidence >= 65 and trade_mode
+            send_signal(decision, confidence, thb_now, reasoning, will_trade=will_trade)
+        except Exception as e:
+            print(f"[discord] Error: {e}")
+
         log_df = get_recent_logs(50)
 
         # Build HTML blocks
