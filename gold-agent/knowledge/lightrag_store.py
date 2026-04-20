@@ -30,7 +30,6 @@ SEED_FILE     = os.path.join(os.path.dirname(__file__), "gold_knowledge.txt")
 SEED_SENTINEL = os.path.join(WORKING_DIR, ".seeded")
 
 _rag              = None
-_st_model         = None
 _openai_client    = None
 # Single-threaded executor: all LightRAG ops run here, never in Gradio's loop
 _executor         = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="lightrag")
@@ -66,13 +65,6 @@ def _get_openai_client():
     return _openai_client
 
 
-def _get_st_model():
-    global _st_model
-    if _st_model is None:
-        from sentence_transformers import SentenceTransformer
-        _st_model = SentenceTransformer("all-MiniLM-L6-v2")
-    return _st_model
-
 
 async def _llm_func(prompt, system_prompt=None, history_messages=None, **kwargs) -> str:
     """Sync OpenAI call wrapped as async for LightRAG compatibility."""
@@ -100,12 +92,23 @@ async def _llm_func(prompt, system_prompt=None, history_messages=None, **kwargs)
 
 async def _embed_func(texts: list[str]) -> np.ndarray:
     """
-    Return embeddings as a numpy array (NOT a Python list).
-    LightRAG's nano_vector_db_impl calls result.size which is a numpy attribute.
-    Returning .tolist() was causing 'list has no attribute size' errors.
+    Return embeddings as a numpy array using OpenAI's text-embedding-3-small API.
     """
-    model = _get_st_model()
-    return model.encode(texts, convert_to_numpy=True)   # numpy array, shape (N, 384)
+    client = _get_openai_client()
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=texts
+    )
+    
+    # Track LLM cost
+    try:
+        from logger.cost_tracker import track_usage
+        track_usage(response.usage, source="lightrag")
+    except Exception:
+        pass
+        
+    embeddings = [item.embedding for item in response.data]
+    return np.array(embeddings)
 
 
 def _get_rag():
@@ -127,7 +130,7 @@ def _get_rag():
         working_dir=WORKING_DIR,
         llm_model_func=_llm_func,
         embedding_func=EmbeddingFunc(
-            embedding_dim=384,
+            embedding_dim=1536,
             max_token_size=8192,
             func=_embed_func,
         ),
@@ -211,10 +214,10 @@ def insert_headlines(headlines: list[str]) -> None:
 
     try:
         future = _executor.submit(_insert_in_thread, headlines)
-        future.result(timeout=10)   # 10s max — avoid blocking Gradio UI
+        future.result(timeout=45)   # 45s max — avoid blocking Gradio UI
         _last_inserted_hash = current_hash
     except concurrent.futures.TimeoutError:
-        print("[lightrag_store.py] Insert timed out (10s) — continuing anyway")
+        print("[lightrag_store.py] Insert timed out (45s) — continuing anyway")
         _last_inserted_hash = current_hash  # still mark as done to avoid re-trying
     except Exception as e:
         print(f"[lightrag_store.py] Insert failed: {e}")
@@ -235,9 +238,9 @@ def query_gold_context(question: str) -> str:
     """
     try:
         future = _executor.submit(_query_in_thread, question)
-        return future.result(timeout=10)   # 10s max — avoid blocking Gradio UI
+        return future.result(timeout=45)   # 45s max — avoid blocking Gradio UI
     except concurrent.futures.TimeoutError:
-        print("[lightrag_store.py] Query timed out (10s) — returning empty context")
+        print("[lightrag_store.py] Query timed out (45s) — returning empty context")
         return ""
     except Exception as e:
         print(f"[lightrag_store.py] Query failed: {e}")

@@ -66,5 +66,3 @@ def send_signal(
         return False
 
 
-if __name__ == "__main__":
-    send_signal("BUY", 75, 73100, "Test signal from Gold Agent", will_trade=True)
