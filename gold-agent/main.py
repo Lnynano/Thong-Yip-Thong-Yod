@@ -47,7 +47,7 @@ _LOOP_INTERVAL = int(os.getenv("TRADE_LOOP_INTERVAL_SEC", "300"))
 # Shared flag -set to True by the Trade Mode toggle in the dashboard.
 # The background thread reads this flag before executing trades.
 _trade_mode_enabled = threading.Event()
-
+_wake_event = threading.Event()
 
 def set_trade_mode(enabled: bool) -> None:
     """Called by the dashboard toggle to enable/disable auto-trading."""
@@ -55,6 +55,13 @@ def set_trade_mode(enabled: bool) -> None:
         _trade_mode_enabled.set()
     else:
         _trade_mode_enabled.clear()
+
+def set_loop_interval(seconds: int) -> None:
+    """Called by the dashboard to dynamically change the loop interval."""
+    global _LOOP_INTERVAL
+    _LOOP_INTERVAL = seconds
+    print(f"[scheduler] Background loop interval changed to {_LOOP_INTERVAL}s")
+    _wake_event.set()
 
 
 def _background_trade_loop() -> None:
@@ -73,28 +80,27 @@ def _background_trade_loop() -> None:
         try:
             trade_mode = _trade_mode_enabled.is_set()
 
-            if trade_mode:
-                from trader.trade_scheduler import can_trade_now
-                if can_trade_now():
-                    print("[scheduler] Trade window open + trade mode ON — running full analysis")
-                    from ui.dashboard import run_full_analysis
-                    run_full_analysis(trade_mode=True)
-                else:
-                    print("[scheduler] Trade mode ON but outside window — skipping LLM call")
+            from trader.trade_scheduler import can_trade_now
+            if can_trade_now():
+                print(f"[scheduler] Trade window open — running full analysis (Trade Mode: {trade_mode})")
+                from ui.dashboard import update_and_cache_analysis
+                update_and_cache_analysis(trade_mode=trade_mode)
             else:
                 # Keep-alive: cheap price fetch only, no LLM calls
                 try:
                     from data.fetch import get_gold_price
                     df = get_gold_price()
                     price = float(df["Close"].iloc[-1]) if not df.empty else 0
-                    print(f"[scheduler] Keep-alive ping — price ${price:.2f} (no LLM call)")
+                    print(f"[scheduler] Trade window closed. Keep-alive ping — price ${price:.2f} (no LLM call)")
                 except Exception:
                     pass
 
         except Exception as e:
             print(f"[scheduler] Cycle error (will retry next interval): {e}")
 
-        time.sleep(_LOOP_INTERVAL)
+        # Wait for the interval, but wake up immediately if interval changes
+        _wake_event.wait(_LOOP_INTERVAL)
+        _wake_event.clear()
 
 
 def verify_environment() -> bool:
@@ -223,6 +229,7 @@ def main():
         try:
             from ui import dashboard as _dash_mod
             _dash_mod._set_trade_mode_callback = set_trade_mode
+            _dash_mod._set_interval_callback = set_loop_interval
         except Exception:
             pass  # non-critical -background loop uses its own flag
 
