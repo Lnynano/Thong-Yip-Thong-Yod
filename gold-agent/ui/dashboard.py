@@ -32,6 +32,8 @@ _last_refresh_time: float = time.time()
 scheduler = BackgroundScheduler()
 _scheduler_job_id = "analysis_job"
 _cached_outputs = None
+import threading
+_init_lock = threading.Lock()
 
 def _run_scheduled_analysis():
     """Runs the heavy analysis in the background exactly on time."""
@@ -60,12 +62,34 @@ def start_scheduler():
         scheduler.start()
     _update_scheduler_interval()
 
+def update_and_cache_analysis(trade_mode: bool = False):
+    """Called by main.py background loop to update the UI globally."""
+    global _cached_outputs
+    with _init_lock:
+        _cached_outputs = run_full_analysis(trade_mode)
+
 def get_latest_ui():
     """Fast UI poller: returns the latest cached results without re-running analysis."""
     global _cached_outputs
     if _cached_outputs is None:
-        state = _load_ui_state()
-        _cached_outputs = run_full_analysis(state.get("trade_mode", False))
+        with _init_lock:
+            if _cached_outputs is None:
+                _cached_outputs = run_full_analysis(_load_ui_state().get("trade_mode", False))
+                
+    if _cached_outputs is not None:
+        # Dynamically inject the countdown timer and "Last updated" string
+        out = list(_cached_outputs)
+        
+        # Index 2 is `last_updated`
+        thai_time = datetime.fromtimestamp(_last_refresh_time, THAI_TZ).strftime("%H:%M:%S")
+        interval_str = "30 min" if _current_mode == "REAL" else "15 sec"
+        out[2] = f"Last updated: {thai_time} (TH)  ·  auto-refresh every {interval_str}"
+        
+        # Index 18 is `countdown_box`
+        out[18] = _get_countdown_html()
+        
+        return tuple(out)
+        
     return _cached_outputs
 
 # ─────────────────────────────────────────────────────────────
@@ -93,57 +117,37 @@ def _save_ui_state(**kwargs) -> None:
     except Exception:
         pass
 
+_set_trade_mode_callback = None
+_set_interval_callback = None
+
 def _set_mode(mode: str) -> None:
     global _current_mode, _last_refresh_time
     _current_mode = mode
     _last_refresh_time = time.time()
     _save_ui_state(refresh_mode=mode)
+    
+    if _set_interval_callback:
+        interval = _INTERVALS.get(mode, 1800)
+        try:
+            _set_interval_callback(interval)
+        except Exception as e:
+            print(f"[dashboard] Failed to set interval: {e}")
+            
     _update_scheduler_interval()
 
 def _get_countdown_html() -> str:
-    interval = _INTERVALS.get(_current_mode, 300)
-    next_at  = _last_refresh_time + interval
+    interval = _INTERVALS.get(_current_mode, 1800)
+    next_at = _last_refresh_time + interval
+    now = time.time()
+    rem = max(0, int(next_at - now))
+    m, s = divmod(rem, 60)
+    filled = min(20, int((interval - rem) / interval * 20)) if interval > 0 else 20
+    bar = "█" * filled + "░" * (20 - filled)
+    color = "#c9f002" if rem < 10 else "#aaa"
     return (
-        f'<div style="font-family:monospace;color:#aaa;padding:4px 8px;font-size:13px;">'
-        f'<span id="cd-text" data-next-at="{next_at:.3f}" data-total="{interval}">'
-        f'Next refresh in  --:-- [--------------------]</span></div>'
+        f'<div style="font-family:monospace;color:{color};padding:4px 8px;font-size:13px;">'
+        f'Next refresh in {m:02d}:{s:02d} [{bar}]</div>'
     )
-
-COUNTDOWN_JS = """
-() => {
-  var _cdLastNextAt = null;
-  function startCountdown() {
-    var el = document.getElementById('cd-text');
-    if (!el) return false;
-    var nextAt = parseFloat(el.getAttribute('data-next-at') || '0');
-    var total  = parseFloat(el.getAttribute('data-total')   || '1800');
-    if (!nextAt) return false;
-    if (window._cdTimer) clearInterval(window._cdTimer);
-    function tick() {
-      var el = document.getElementById('cd-text');
-      if (!el) return;
-      var rem    = Math.max(0, Math.round(nextAt - Date.now() / 1000));
-      var m      = Math.floor(rem / 60), s = rem % 60;
-      var filled = Math.min(20, Math.floor((total - rem) / total * 20));
-      var bar    = '#'.repeat(filled) + '-'.repeat(20 - filled);
-      el.textContent = 'Next refresh in  ' + m + ':' + (s < 10 ? '0' : '') + s + '  [' + bar + '] ';
-    }
-    tick();
-    window._cdTimer = setInterval(tick, 1000);
-    return true;
-  }
-  function tryStart() {
-    if (!startCountdown()) setTimeout(tryStart, 500);
-  }
-  tryStart();
-  new MutationObserver(function() {
-    var el = document.getElementById('cd-text');
-    if (!el) return;
-    var na = el.getAttribute('data-next-at');
-    if (na && na !== _cdLastNextAt) { _cdLastNextAt = na; startCountdown(); }
-  }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-next-at'] });
-}
-"""
 
 PNS_CSS = """
 body, .gradio-container, .main, .wrap { background: #0b0b0b !important; color: #c8c8c8 !important; font-family: 'Courier New', monospace !important; }
@@ -531,8 +535,9 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         port_block = _portfolio_html(portfolio)
         outcome_bar = _outcome_bar_html(outcomes)
         trade_table = _trade_table_html(trades, portfolio.get("open_position"))
-        thai_now = datetime.now(THAI_TZ).strftime("%H:%M:%S")
-        last_updated = f"Last updated: {thai_now} (TH)  ·  auto-refresh every 30 min"
+        thai_now = datetime.fromtimestamp(_last_refresh_time, THAI_TZ).strftime("%H:%M:%S")
+        interval_str = "30 min" if _current_mode == "REAL" else "15 sec"
+        last_updated = f"Last updated: {thai_now} (TH)  ·  auto-refresh every {interval_str}"
         tm_html = _trade_mode_html(trade_mode)
 
         action = trade_result.get("action", "")
@@ -569,7 +574,7 @@ def build_ui() -> gr.Blocks:
     _init_refresh_mode: str = _saved["refresh_mode"]
     _set_mode(_init_refresh_mode)
 
-    with gr.Blocks(title="Thong Yip Thong Yod", js=COUNTDOWN_JS) as demo:
+    with gr.Blocks(title="Thong Yip Thong Yod") as demo:
         gr.HTML("""<div style="font-family:'Courier New',monospace; padding:14px 24px; background:#0f0f0f; border-bottom:1px solid #1e1e1e; display:flex; justify-content:space-between; align-items:center;"><span style="color:#888; font-size:1.1em; font-weight:700; letter-spacing:0.2em;"> Thong Yip Thong Yod</span><span style="color:#555; font-size:0.75em; letter-spacing:0.1em;">XAUUSD &nbsp;·&nbsp; PAPER TRADING &nbsp;·&nbsp; <span style="color:#c9f002;">● LIVE</span></span></div>""")
 
         with gr.Row(visible=DEV_MODE):
@@ -644,12 +649,10 @@ def build_ui() -> gr.Blocks:
 
         # ── Manual Refresh ───────────────────────────────────────────────────
         def force_refresh(trade_mode):
-            global _cached_outputs
-            _cached_outputs = run_full_analysis(trade_mode)
+            update_and_cache_analysis(trade_mode)
             # Reset scheduler timer so it doesn't double-fire immediately after
-            if scheduler.get_job(_scheduler_job_id):
-                interval = _INTERVALS.get(_current_mode, 1800)
-                scheduler.modify_job(_scheduler_job_id, next_run_time=datetime.now() + timedelta(seconds=interval))
+            if _set_interval_callback:
+                _set_interval_callback(_INTERVALS.get(_current_mode, 1800))
             return _cached_outputs
 
         run_btn.click(fn=force_refresh, inputs=[trade_mode_toggle], outputs=outputs)
@@ -659,11 +662,9 @@ def build_ui() -> gr.Blocks:
 
         def _on_trade_mode_change(enabled: bool):
             _save_ui_state(trade_mode=enabled)
-            global _cached_outputs
-            _cached_outputs = run_full_analysis(enabled)
-            if scheduler.get_job(_scheduler_job_id):
-                interval = _INTERVALS.get(_current_mode, 1800)
-                scheduler.modify_job(_scheduler_job_id, next_run_time=datetime.now() + timedelta(seconds=interval))
+            update_and_cache_analysis(enabled)
+            if _set_interval_callback:
+                _set_interval_callback(_INTERVALS.get(_current_mode, 1800))
             return _cached_outputs
 
         trade_mode_toggle.change(fn=_on_trade_mode_change, inputs=[trade_mode_toggle], outputs=outputs)
