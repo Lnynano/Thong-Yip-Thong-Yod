@@ -222,8 +222,8 @@ def get_sentiment_summary(headlines: list[str]) -> str:
         return _sentiment_cache["value"]
 
     # ── Choose your model here (uncomment the one you want to use) ──
-    #ACTIVE_MODEL = "openai"
-    ACTIVE_MODEL = "gemini"
+    ACTIVE_MODEL = "openai"
+    #ACTIVE_MODEL = "gemini"
 
     if ACTIVE_MODEL == "openai":
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
