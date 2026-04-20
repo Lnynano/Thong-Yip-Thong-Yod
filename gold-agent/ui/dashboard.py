@@ -193,7 +193,7 @@ def _build_price_chart(df) -> plt.Figure:
     ax.plot(plot_df.index, sma20, color="#444444", linewidth=1, linestyle="--", alpha=0.6, zorder=2)
     ax.fill_between(plot_df.index, close, close.min() * 0.999, alpha=0.08, color="#ff7070", zorder=1)
     ax.set_ylabel("USD / oz", color="#555", fontsize=9)
-    ax.set_title("XAUUSD  —  90D", color="#555", fontsize=9, loc="left", pad=8, fontfamily="Courier New")
+    ax.set_title("XAUUSD  —  90D", color="#555", fontsize=9, loc="left", pad=8, fontfamily="monospace")
     ax.annotate(f"  ${float(close.iloc[-1]):,.2f}", xy=(plot_df.index[-1], float(close.iloc[-1])), color="#ff7070", fontsize=9, fontweight="bold")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
     ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
@@ -241,7 +241,7 @@ def _build_equity_chart(equity_history: list) -> plt.Figure:
         ax.fill_between(xs, values, values[0], alpha=0.1, color="#c9f002", zorder=1)
         ax.axhline(values[0], color="#333", linestyle="--", linewidth=0.8)
         ax.set_ylabel("Equity (THB)", color="#555", fontsize=8)
-        ax.set_title("P&L CURVE", color="#555", fontsize=9, loc="left", pad=6, fontfamily="Courier New")
+        ax.set_title("P&L CURVE", color="#555", fontsize=9, loc="left", pad=6, fontfamily="monospace")
         last = values[-1]
         color = "#c9f002" if last >= values[0] else "#cc3333"
         ax.annotate(f"  ฿{last:,.2f}", xy=(xs[-1], last), color=color, fontsize=9, fontweight="bold")
