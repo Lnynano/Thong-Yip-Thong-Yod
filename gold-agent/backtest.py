@@ -88,7 +88,7 @@ except ImportError:
         elif conf >= 75: return 0.80
         else: return 0.60
 
-CONFIDENCE_GATE = 50  # Overridden for comparison
+CONFIDENCE_GATE = 65  # Overridden for comparison
 
 from converter.thai import THAI_GOLD_PURITY
 
@@ -627,4 +627,4 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
 
 
 if __name__ == "__main__":
-    run_backtest(config= { "use_cache": True , "use_macd": False, "use_bb": False, "use_news": False, "use_dxy_vix": False, "use_h1_mtf": False, "use_daily_bias": False, "use_volume_spike": False })
+    run_backtest(config= { "use_cache": True })
