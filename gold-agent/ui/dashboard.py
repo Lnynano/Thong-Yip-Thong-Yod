@@ -135,6 +135,14 @@ def _set_mode(mode: str) -> None:
             
     _update_scheduler_interval()
 
+def sync_initial_state_to_main():
+    """Called by main.py after wiring callbacks to sync the loaded state."""
+    state = _load_ui_state()
+    if _set_trade_mode_callback:
+        _set_trade_mode_callback(state.get("trade_mode", False))
+    if _set_interval_callback:
+        _set_interval_callback(_INTERVALS.get(state.get("refresh_mode", "REAL"), 1800))
+
 def _get_countdown_html() -> str:
     interval = _INTERVALS.get(_current_mode, 1800)
     next_at = _last_refresh_time + interval

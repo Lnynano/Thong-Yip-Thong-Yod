@@ -62,7 +62,6 @@ except ImportError:
 # ── Constants — pulled from paper_engine.py to stay in sync ──────────────────
 try:
     from trader.paper_engine import (
-        CONF_THRESHOLD   as CONFIDENCE_GATE,
         TAKE_PROFIT_PCT,
         STOP_LOSS_PCT,
         TRAILING_SL_PCT,
@@ -75,7 +74,6 @@ try:
         _size_pct_by_confidence,
     )
 except ImportError:
-    CONFIDENCE_GATE    = 65
     TAKE_PROFIT_PCT    = 0.015
     STOP_LOSS_PCT      = -0.010
     TRAILING_SL_PCT    = 0.007
@@ -89,6 +87,8 @@ except ImportError:
         if conf >= 85: return 0.95
         elif conf >= 75: return 0.80
         else: return 0.60
+
+CONFIDENCE_GATE = 50  # Overridden for comparison
 
 from converter.thai import THAI_GOLD_PURITY
 
@@ -239,7 +239,7 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
 
     # ── State ─────────────────────────────────────────────────────────────────
     balance_thb   = INITIAL_BALANCE_THB
-    open_position = None
+    open_positions = []
     closed_trades = []
     daily_log     = []
     cooldown      = 0
@@ -313,7 +313,7 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                 "confidence": 0,
                 "action"    : "OUT_OF_WINDOW",
                 "pnl_thb"   : 0.0,
-                "equity_thb": round(balance_thb + (open_position["size_bw"] * price_thb if open_position else 0), 2),
+                "equity_thb": round(balance_thb + sum(p["size_bw"] * price_thb for p in open_positions), 2),
             })
             continue
 
@@ -333,25 +333,20 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
         pnl_thb    = 0.0
 
         # ── TP / Trailing stop / SL ───────────────────────────────────────────
-        if open_position is not None:
-            change_pct = (price_thb - open_position["entry_price"]) / open_position["entry_price"]
-            if change_pct >= TAKE_PROFIT_PCT:
-                decision   = "SELL"
-                confidence = 100
-            highest = max(open_position.get("highest_price", open_position["entry_price"]), price_thb)
-            open_position["highest_price"] = highest
+        for pos in open_positions:
+            change_pct = (price_thb - pos["entry_price"]) / pos["entry_price"]
+            highest = max(pos.get("highest_price", pos["entry_price"]), price_thb)
+            pos["highest_price"] = highest
             trailing_sl_price = highest * (1 - TRAILING_SL_PCT)
-            if price_thb <= trailing_sl_price and highest > open_position["entry_price"]:
+            if change_pct >= TAKE_PROFIT_PCT or change_pct <= STOP_LOSS_PCT or (price_thb <= trailing_sl_price and highest > pos["entry_price"]):
                 decision   = "SELL"
                 confidence = 100
-            elif change_pct <= STOP_LOSS_PCT:
-                decision   = "SELL"
-                confidence = 100
+                break
 
-        # ── Failsafe: window ending in ≤10 min, quota not met, still HOLD ────
+        # ── Failsafe: window ending in ≤60 min, quota not met, still HOLD ────
         _mins_left = _minutes_until_window_end(date)
         if (decision == "HOLD" and
-                _mins_left is not None and _mins_left <= 10 and
+                _mins_left is not None and _mins_left <= 60 and
                 _window_used < 2):
             with _quiet(), patch.object(fetch_module, "get_gold_price", return_value=window):
                 agent = run_agent(quota_pressure=True, failsafe_pressure=True, config=config)
@@ -381,7 +376,7 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
             cooldown -= 1
 
         # ── BUY ───────────────────────────────────────────────────────────────
-        elif decision == "BUY" and open_position is None:
+        elif decision == "BUY":
             if balance_thb >= MIN_BALANCE_THB:
                 size_pct = _size_pct_by_confidence(confidence)
                 gross    = round(balance_thb * size_pct, 2)
@@ -389,7 +384,7 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                 cost     = round(gross + open_fee, 2)
                 size_bw  = gross / price_thb
                 balance_thb  -= cost
-                open_position = {
+                open_positions.append({
                     "entry_date"   : _to_thai(date).strftime("%Y-%m-%d %H:%M"),
                     "entry_price"  : price_thb,
                     "highest_price": price_thb,
@@ -400,54 +395,55 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                     "sl_price"     : round(price_thb * (1 + STOP_LOSS_PCT), 0),
                     "confidence"   : confidence,
                     "size_pct"     : size_pct,
-                }
+                })
                 cooldown = 0
                 action   = "OPENED"
             else:
                 action = "SKIP"
 
-        elif decision == "BUY" and open_position is not None:
-            action = "SKIP"
-
         # ── SELL ──────────────────────────────────────────────────────────────
-        elif decision == "SELL" and open_position is not None:
-            gross_proceeds = open_position["size_bw"] * price_thb
-            close_fee      = _calc_fee(gross_proceeds)
-            open_fee       = open_position.get("open_fee", 0.0)
-            net_proceeds   = round(gross_proceeds - close_fee, 2)
-            total_fees     = round(open_fee + close_fee, 2)
-            pnl_thb        = round(net_proceeds - open_position["cost_thb"], 2)
-            pnl_pct        = round(pnl_thb / open_position["cost_thb"] * 100, 2)
-            outcome        = "WIN" if pnl_thb >= 0 else "LOSS"
-            balance_thb   += net_proceeds
-            trade = {
-                "entry_date" : open_position["entry_date"],
-                "exit_date"  : _to_thai(date).strftime("%Y-%m-%d %H:%M"),
-                "entry_price": open_position["entry_price"],
-                "exit_price" : price_thb,
-                "size_bw"    : round(open_position["size_bw"], 6),
-                "cost_thb"   : open_position["cost_thb"],
-                "open_fee"   : open_fee,
-                "close_fee"  : close_fee,
-                "total_fees" : total_fees,
-                "pnl_thb"    : pnl_thb,
-                "pnl_pct"    : pnl_pct,
-                "outcome"    : outcome,
-            }
-            closed_trades.append(trade)
-            open_position = None
-            cooldown      = LOSS_COOLDOWN if outcome == "LOSS" else COOLDOWN_ROUNDS
-            action        = f"CLOSED [{outcome}]"
+        elif decision == "SELL" and open_positions:
+            total_pnl_thb = 0.0
+            any_loss = False
+            for pos in open_positions:
+                gross_proceeds = pos["size_bw"] * price_thb
+                close_fee      = _calc_fee(gross_proceeds)
+                open_fee       = pos.get("open_fee", 0.0)
+                net_proceeds   = round(gross_proceeds - close_fee, 2)
+                total_fees     = round(open_fee + close_fee, 2)
+                pos_pnl_thb    = round(net_proceeds - pos["cost_thb"], 2)
+                pnl_pct        = round(pos_pnl_thb / pos["cost_thb"] * 100, 2)
+                outcome        = "WIN" if pos_pnl_thb >= 0 else "LOSS"
+                if pos_pnl_thb < 0: any_loss = True
+                total_pnl_thb += pos_pnl_thb
+                balance_thb   += net_proceeds
+                trade = {
+                    "entry_date" : pos["entry_date"],
+                    "exit_date"  : _to_thai(date).strftime("%Y-%m-%d %H:%M"),
+                    "entry_price": pos["entry_price"],
+                    "exit_price" : price_thb,
+                    "size_bw"    : round(pos["size_bw"], 6),
+                    "cost_thb"   : pos["cost_thb"],
+                    "open_fee"   : open_fee,
+                    "close_fee"  : close_fee,
+                    "total_fees" : total_fees,
+                    "pnl_thb"    : pos_pnl_thb,
+                    "pnl_pct"    : pnl_pct,
+                    "outcome"    : outcome,
+                }
+                closed_trades.append(trade)
+            open_positions = []
+            pnl_thb = total_pnl_thb
+            cooldown = LOSS_COOLDOWN if any_loss else COOLDOWN_ROUNDS
+            action = "CLOSED [BASKET]"
 
-        elif decision == "SELL" and open_position is None:
+        elif decision == "SELL" and not open_positions:
             action = "SKIP"
             if cooldown > 0:
                 cooldown -= 1
 
-        unrealized = 0.0
-        if open_position:
-            unrealized = (open_position["size_bw"] * price_thb) - open_position["cost_thb"]
-        equity = round(balance_thb + (open_position["size_bw"] * price_thb if open_position else 0), 2)
+        unrealized = sum((p["size_bw"] * price_thb) - p["cost_thb"] for p in open_positions)
+        equity = round(balance_thb + sum(p["size_bw"] * price_thb for p in open_positions), 2)
 
         daily_log.append({
             "candle"    : candle_no,
@@ -468,8 +464,8 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
     # ── Summary calculations ──────────────────────────────────────────────────
     last_price_thb = daily_log[-1]["price_thb"] if daily_log else 0
     final_equity   = balance_thb
-    if open_position:
-        final_equity += open_position["size_bw"] * last_price_thb
+    for pos in open_positions:
+        final_equity += pos["size_bw"] * last_price_thb
 
     wins       = [t for t in closed_trades if t["outcome"] == "WIN"]
     losses     = [t for t in closed_trades if t["outcome"] == "LOSS"]
@@ -625,7 +621,8 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
         "daily_log"     : daily_log,
         "closed_trades" : closed_trades,
         "summary"       : summary,
-        "open_position" : open_position,
+        "open_position" : open_positions[0] if open_positions else None,
+        "open_positions": open_positions,
     }
 
 
