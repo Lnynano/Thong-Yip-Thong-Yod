@@ -88,24 +88,36 @@ def _get_mongo_collection(name: str):
 # ─────────────────────────────────────────────────────────────
 def _load() -> dict:
     """Load portfolio state from MongoDB or local JSON fallback."""
+    state = None
     col = _get_mongo_collection("portfolio")
     if col is not None:
         try:
             doc = col.find_one({"_id": "main"})
             if doc:
                 doc.pop("_id", None)
-                return doc
+                state = doc
         except Exception as e:
             print(f"[paper_engine.py] MongoDB load failed, using JSON: {e}")
 
     # JSON fallback
-    if os.path.exists(PORTFOLIO_FILE):
+    if state is None and os.path.exists(PORTFOLIO_FILE):
         try:
             with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                state = json.load(f)
         except Exception:
             pass
-    return _fresh_state()
+            
+    if state is None:
+        state = _fresh_state()
+        
+    if "open_position" in state and state["open_position"] is not None:
+        state.setdefault("open_positions", []).append(state["open_position"])
+    if "open_position" in state:
+        del state["open_position"]
+    if "open_positions" not in state:
+        state["open_positions"] = []
+        
+    return state
 
 
 def _save(state: dict) -> None:
@@ -135,7 +147,7 @@ def _fresh_state(initial_balance: float = DEFAULT_BALANCE) -> dict:
     return {
         "initial_balance": initial_balance,
         "balance":         initial_balance,
-        "open_position":   None,
+        "open_positions":  [],
         "closed_trades":   [],
         "equity_history":  [
             {"time": datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M"), "equity": initial_balance}
@@ -146,9 +158,9 @@ def _fresh_state(initial_balance: float = DEFAULT_BALANCE) -> dict:
 
 def _record_equity(state: dict, price_thb: float) -> None:
     """Append current total equity to history for the P&L curve."""
-    pos    = state["open_position"]
-    value  = (pos["size_bw"] * price_thb) if pos else 0.0
-    equity = state["balance"] + value
+    positions = state.get("open_positions", [])
+    value     = sum(p["size_bw"] * price_thb for p in positions)
+    equity    = state["balance"] + value
     state["equity_history"].append({
         "time":   datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M"),
         "equity": round(equity, 2),
@@ -196,8 +208,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
     now = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     # ── Auto TP/SL + trailing stop check (overrides agent decision) ──
-    pos = state["open_position"]
-    if pos is not None:
+    for pos in state.get("open_positions", []):
         entry = pos["entry_price"]
         change_pct = (price_thb - entry) / entry
 
@@ -209,20 +220,11 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
         trailing_sl_price = highest * (1 - TRAILING_SL_PCT)
         trailing_triggered = (price_thb <= trailing_sl_price and highest > entry)
 
-        if change_pct >= TAKE_PROFIT_PCT:
+        if change_pct >= TAKE_PROFIT_PCT or trailing_triggered or change_pct <= STOP_LOSS_PCT:
             decision   = "SELL"
             confidence = 100
-            print(f"[paper_engine.py] TAKE PROFIT triggered at {change_pct*100:+.2f}%")
-        elif trailing_triggered:
-            decision   = "SELL"
-            confidence = 100
-            print(f"[paper_engine.py] TRAILING STOP triggered: "
-                  f"peak={highest:,.0f} now={price_thb:,.0f} "
-                  f"drop={((price_thb - highest) / highest * 100):+.2f}%")
-        elif change_pct <= STOP_LOSS_PCT:
-            decision   = "SELL"
-            confidence = 100
-            print(f"[paper_engine.py] STOP LOSS triggered at {change_pct*100:+.2f}%")
+            print(f"[paper_engine.py] TP/SL triggered for a position!")
+            break
         else:
             _save(state)  # persist updated highest_price
 
@@ -241,7 +243,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
                 "reason": f"Cooldown active — {cooldown} round(s) remaining"}
 
     # ── Open long ────────────────────────────────────────────
-    if decision == "BUY" and state["open_position"] is None:
+    if decision == "BUY":
         available = state["balance"]
         if available < MIN_TRADE_THB:
             return {"action": "SKIP",
@@ -254,7 +256,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
         size_bw = gross / price_thb         # gold bought with gross amount (fee is overhead)
 
         state["balance"]       -= cost
-        state["open_position"]  = {
+        state["open_positions"].append({
             "direction":    "BUY",
             "entry_price":  price_thb,
             "highest_price": price_thb,   # for trailing stop
@@ -264,7 +266,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
             "entry_time":   now,
             "confidence":   confidence,
             "size_pct":     size_pct,
-        }
+        })
         state["cooldown"] = 0
         _record_equity(state, price_thb)
         _save(state)
@@ -279,46 +281,46 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
                 "sl_price": round(price_thb * (1 + STOP_LOSS_PCT), 0)}
 
     # ── Close long ───────────────────────────────────────────
-    if decision == "SELL" and state["open_position"] is not None:
-        pos          = state["open_position"]
-        gross_proceeds = pos["size_bw"] * price_thb
-        close_fee    = _calc_fee(gross_proceeds)              # fee on close
-        open_fee     = pos.get("open_fee", 0.0)
-        net_proceeds = round(gross_proceeds - close_fee, 2)  # actually received
-        total_fees   = round(open_fee + close_fee, 2)
-        pnl          = net_proceeds - pos["cost_thb"]        # net of ALL fees
-        pnl_pct      = pnl / pos["cost_thb"] * 100
-
-        state["balance"] = max(0.0, state["balance"] + net_proceeds)  # floor at 0
-        trade = {
-            "entry_time":  pos["entry_time"],
-            "exit_time":   now,
-            "entry_price": pos["entry_price"],
-            "exit_price":  price_thb,
-            "size_bw":     pos["size_bw"],
-            "cost_thb":    pos["cost_thb"],
-            "open_fee":    open_fee,
-            "close_fee":   close_fee,
-            "total_fees":  total_fees,
-            "pnl_thb":     round(pnl, 2),
-            "pnl_pct":     round(pnl_pct, 2),
-            "outcome":     "WIN" if pnl >= 0 else "LOSS",
-        }
-        state["closed_trades"].append(trade)
-        state["open_position"] = None
+    if decision == "SELL" and state.get("open_positions"):
+        total_pnl = 0.0
+        any_loss = False
+        for pos in state["open_positions"]:
+            gross_proceeds = pos["size_bw"] * price_thb
+            close_fee    = _calc_fee(gross_proceeds)              # fee on close
+            open_fee     = pos.get("open_fee", 0.0)
+            net_proceeds = round(gross_proceeds - close_fee, 2)  # actually received
+            total_fees   = round(open_fee + close_fee, 2)
+            pnl          = net_proceeds - pos["cost_thb"]        # net of ALL fees
+            pnl_pct      = pnl / pos["cost_thb"] * 100
+            
+            total_pnl += pnl
+            if pnl < 0: any_loss = True
+            
+            state["balance"] = max(0.0, state["balance"] + net_proceeds)  # floor at 0
+            trade = {
+                "entry_time":  pos["entry_time"],
+                "exit_time":   now,
+                "entry_price": pos["entry_price"],
+                "exit_price":  price_thb,
+                "size_bw":     pos["size_bw"],
+                "cost_thb":    pos["cost_thb"],
+                "open_fee":    open_fee,
+                "close_fee":   close_fee,
+                "total_fees":  total_fees,
+                "pnl_thb":     round(pnl, 2),
+                "pnl_pct":     round(pnl_pct, 2),
+                "outcome":     "WIN" if pnl >= 0 else "LOSS",
+            }
+            state["closed_trades"].append(trade)
+            
+        state["open_positions"] = []
         # Cooldown: extra pause after a LOSS to prevent revenge trading
-        state["cooldown"]      = LOSS_COOLDOWN if trade["outcome"] == "LOSS" else COOLDOWN_ROUNDS
+        state["cooldown"]      = LOSS_COOLDOWN if any_loss else COOLDOWN_ROUNDS
         _record_equity(state, price_thb)
         _save(state)
-        print(f"[paper_engine.py] CLOSED  {trade['outcome']}  "
-              f"P&L {pnl:+.2f} THB ({pnl_pct:+.2f}%)  "
-              f"fees={total_fees:.2f} THB  cooldown={COOLDOWN_ROUNDS} rounds")
-        return {"action": "CLOSED", "pnl_thb": pnl,
-                "pnl_pct": pnl_pct, "outcome": trade["outcome"],
-                "total_fees": total_fees, "trade": trade}
-
-    if decision == "BUY" and state["open_position"] is not None:
-        return {"action": "SKIP", "reason": "Already holding a position"}
+        print(f"[paper_engine.py] CLOSED  BASKET  "
+              f"Total P&L {total_pnl:+.2f} THB  cooldown={COOLDOWN_ROUNDS} rounds")
+        return {"action": "CLOSED", "pnl_thb": total_pnl, "trade": state["closed_trades"][-1]}
 
     # Tick down cooldown on HOLD too
     if cooldown > 0:
@@ -340,8 +342,8 @@ def get_portfolio_summary(current_price_thb: float = 0.0) -> dict:
     """
     state  = _load()
     closed = state["closed_trades"]
-    pos    = state["open_position"]
-
+    positions = state.get("open_positions", [])
+    
     wins   = [t for t in closed if t["outcome"] == "WIN"]
     losses = [t for t in closed if t["outcome"] == "LOSS"]
 
@@ -354,20 +356,20 @@ def get_portfolio_summary(current_price_thb: float = 0.0) -> dict:
 
     unrealized_pnl = 0.0
     open_info      = None
-    if pos and current_price_thb > 0:
-        unrealized_pnl = (pos["size_bw"] * current_price_thb) - pos["cost_thb"]
+    if positions and current_price_thb > 0:
+        unrealized_pnl = sum((pos["size_bw"] * current_price_thb) - pos["cost_thb"] for pos in positions)
+        total_cost = sum(pos["cost_thb"] for pos in positions)
         open_info = {
-            "entry_price":    pos["entry_price"],
+            "entry_price":    positions[-1]["entry_price"],  # Just show latest for UI simplicity
             "current_price":  current_price_thb,
-            "size_bw":        pos["size_bw"],
-            "cost_thb":       pos["cost_thb"],
+            "size_bw":        sum(pos["size_bw"] for pos in positions),
+            "cost_thb":       total_cost,
             "unrealized":     round(unrealized_pnl, 2),
-            "unrealized_pct": round(unrealized_pnl / pos["cost_thb"] * 100, 2),
-            "entry_time":     pos["entry_time"],
+            "unrealized_pct": round(unrealized_pnl / total_cost * 100, 2) if total_cost > 0 else 0.0,
+            "entry_time":     positions[-1]["entry_time"],
         }
 
-    pos_value    = (pos["size_bw"] * current_price_thb) if (pos and current_price_thb > 0) \
-                   else (pos["cost_thb"] if pos else 0.0)
+    pos_value = sum((pos["size_bw"] * current_price_thb) if current_price_thb > 0 else pos["cost_thb"] for pos in positions)
     total_equity = state["balance"] + pos_value
     total_pnl    = total_equity - state["initial_balance"]
 
@@ -385,7 +387,7 @@ def get_portfolio_summary(current_price_thb: float = 0.0) -> dict:
         "total_trades":    len(closed),
         "rr_ratio":        round(rr_ratio, 2),
         "open_position":   open_info,
-        "has_position":    pos is not None,
+        "has_position":    len(positions) > 0,
         "avg_win":         round(avg_win, 2),
         "avg_loss":        round(avg_loss_val, 2),
         "total_fees":      round(total_fees, 2),

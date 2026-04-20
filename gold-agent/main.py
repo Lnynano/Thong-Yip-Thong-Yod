@@ -230,6 +230,7 @@ def main():
             from ui import dashboard as _dash_mod
             _dash_mod._set_trade_mode_callback = set_trade_mode
             _dash_mod._set_interval_callback = set_loop_interval
+            _dash_mod.sync_initial_state_to_main()
         except Exception:
             pass  # non-critical -background loop uses its own flag
 
