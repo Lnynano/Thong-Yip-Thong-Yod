@@ -609,17 +609,28 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, con
         "agent_trace" : [],
     }
 
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    # ── Choose your model here (uncomment the one you want to use) ──
+    #ACTIVE_MODEL = "openai"
+    ACTIVE_MODEL = "gemini"
+
+    if ACTIVE_MODEL == "openai":
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        client = OpenAI(api_key=api_key)
+        model_name = "gpt-4o-mini"
+    else:
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        client = OpenAI(api_key=api_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
+        model_name = "gemini-2.5-flash-lite"
+
     if not api_key or api_key == "your_key_here":
-        print("[trading_agent.py] No OPENAI_API_KEY found.")
-        default_result["reasoning"] = "OPENAI_API_KEY not configured. Set it in your .env file."
+        print(f"[trading_agent.py] No API key found for {ACTIVE_MODEL}.")
+        default_result["reasoning"] = f"{ACTIVE_MODEL} API key not configured in .env."
         return default_result
 
     # ReAct trajectory log
     agent_trace = []
 
     try:
-        client = OpenAI(api_key=api_key)
 
         # Initial messages with system prompt + user task
         messages = [
@@ -670,7 +681,7 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, con
             print(f"[trading_agent.py] Iteration {iteration}/{max_iterations}")
 
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=model_name,
                 max_tokens=1024,
                 temperature=0,
                 tools=TOOLS,

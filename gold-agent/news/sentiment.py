@@ -221,12 +221,23 @@ def get_sentiment_summary(headlines: list[str]) -> str:
         print(f"[sentiment.py] Cache hit -> {_sentiment_cache['value']} (saved 1 Haiku call)")
         return _sentiment_cache["value"]
 
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    # ── Choose your model here (uncomment the one you want to use) ──
+    #ACTIVE_MODEL = "openai"
+    ACTIVE_MODEL = "gemini"
+
+    if ACTIVE_MODEL == "openai":
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        client = OpenAI(api_key=api_key)
+        model_name = "gpt-4o-mini"
+    else:
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        client = OpenAI(api_key=api_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
+        model_name = "gemini-2.5-flash-lite"
+
     if not api_key:
         return _keyword_sentiment(headlines)
 
     try:
-        client = OpenAI(api_key=api_key)
         headlines_text = "\n".join(f"- {h}" for h in headlines)
         prompt = (
             f"Analyze these gold market news headlines:\n{headlines_text}\n\n"
@@ -234,7 +245,7 @@ def get_sentiment_summary(headlines: list[str]) -> str:
             '{"sentiment": "BULLISH" or "BEARISH" or "NEUTRAL", "reasoning": "<1 sentence>"}'
         )
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=model_name,
             max_tokens=100,
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
