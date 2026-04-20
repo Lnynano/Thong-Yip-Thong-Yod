@@ -610,8 +610,8 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, con
     }
 
     # ── Choose your model here (uncomment the one you want to use) ──
-    #ACTIVE_MODEL = "openai"
-    ACTIVE_MODEL = "gemini"
+    ACTIVE_MODEL = "openai"
+    #ACTIVE_MODEL = "gemini"
 
     if ACTIVE_MODEL == "openai":
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
