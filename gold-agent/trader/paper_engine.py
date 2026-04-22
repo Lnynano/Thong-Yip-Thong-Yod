@@ -49,7 +49,7 @@ def _size_pct_by_confidence(confidence: int) -> float:
     elif confidence >= 75:
         return 0.80
     else:
-        return 0.60
+        return 0.70
 
 # ── Trading fee constants (loaded from env) ───────────────────
 # Applied on every transaction (both open and close).
@@ -251,6 +251,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
 
         size_pct = _size_pct_by_confidence(confidence)
         gross   = available * size_pct      # confidence-scaled position
+        if gross < MIN_TRADE_THB:return {"action": "SKIP", "reason": f"Trade size {gross:.0f} THB < minimum 1000 THB"}
         fee     = _calc_fee(gross)          # fee on open
         cost    = round(gross + fee, 2)     # total deducted from balance
         size_bw = gross / price_thb         # gold bought with gross amount (fee is overhead)
