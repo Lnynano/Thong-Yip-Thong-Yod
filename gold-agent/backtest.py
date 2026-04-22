@@ -343,10 +343,10 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                 confidence = 100
                 break
 
-        # ── Failsafe: window ending in ≤60 min, quota not met, still HOLD ────
+        # ── Failsafe: window ending in ≤120 min, quota not met, still HOLD ────
         _mins_left = _minutes_until_window_end(date)
         if (decision == "HOLD" and
-                _mins_left is not None and _mins_left <= 60 and
+                _mins_left is not None and _mins_left <= 120 and
                 _window_used < 2):
             with _quiet(), patch.object(fetch_module, "get_gold_price", return_value=window):
                 agent = run_agent(quota_pressure=True, failsafe_pressure=True, config=config)
@@ -358,11 +358,7 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                 confidence = 51
                 reasoning  = "[FAILSAFE] Window closing, quota not met. Forced BUY signal."
 
-        # ── Count BUY/SELL decision toward window quota ───────────────────────
-        if decision in ("BUY", "SELL"):
-            date_str = _thai_date_str(date)
-            _window_trades.setdefault(date_str, {})
-            _window_trades[date_str][candle_window] = _window_trades[date_str].get(candle_window, 0) + 1
+        # ── Count BUY/SELL decision toward window quota (counted AFTER gate, below) ──
 
         # ── Gate / Cooldown ───────────────────────────────────────────────────
         _effective_gate = 50 if _quota_pressure else CONFIDENCE_GATE
@@ -398,6 +394,8 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                 })
                 cooldown = 0
                 action   = "OPENED"
+                # Count executed BUY toward quota
+                _window_trades[date_str_today][candle_window] = _window_trades[date_str_today].get(candle_window, 0) + 1
             else:
                 action = "SKIP"
 
@@ -436,6 +434,8 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
             pnl_thb = total_pnl_thb
             cooldown = LOSS_COOLDOWN if any_loss else COOLDOWN_ROUNDS
             action = "CLOSED [BASKET]"
+            # Count executed SELL toward quota
+            _window_trades[date_str_today][candle_window] = _window_trades[date_str_today].get(candle_window, 0) + 1
 
         elif decision == "SELL" and not open_positions:
             action = "SKIP"
