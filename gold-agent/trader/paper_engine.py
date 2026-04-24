@@ -12,7 +12,7 @@ Starting balance : 1,500 THB  (configurable)
 Min trade size   : 1,000 THB  (mirrors AOM NOW minimum)
 Confidence gate  : >= 65%     (only trade high-conviction signals)
 Position model   : Long-only  (BUY to open, SELL to close — no shorting)
-Sizing           : 95% of available balance per trade
+Typical position size : 90%-100% of available balance (Aggressive).
 """
 
 import os
@@ -39,17 +39,17 @@ LOSS_COOLDOWN   = 1       # extra cooldown after a LOSS trade — skip 1 cycle t
 
 # ── Position sizing by confidence ────────────────────────────
 # Higher confidence = larger position. Prevents betting big on weak signals.
-#   65-74% -> 60% of balance
-#   75-84% -> 80% of balance
-#   85%+   -> 95% of balance
+#   65-74% -> 90% of balance
+#   75-84% -> 95% of balance
+#   85%+   -> 100% of balance
 def _size_pct_by_confidence(confidence: int) -> float:
     """Return position size as fraction of balance based on confidence."""
     if confidence >= 85:
-        return 0.95
+        return 1.00
     elif confidence >= 75:
-        return 0.80
+        return 0.95
     else:
-        return 0.70
+        return 0.90
 
 # ── Trading fee constants (loaded from env) ───────────────────
 # Applied on every transaction (both open and close).
@@ -225,8 +225,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
             confidence = 100
             print(f"[paper_engine.py] TP/SL triggered for a position!")
             break
-        else:
-            _save(state)  # persist updated highest_price
+    _save(state)  # persist updated highest_price
 
     # ── Confidence gate (skip TP/SL override) ────────────────
     effective_gate = min_confidence if min_confidence is not None else CONF_THRESHOLD
@@ -250,8 +249,9 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
                     "reason": f"Balance {available:.0f} THB < minimum {MIN_TRADE_THB:.0f} THB"}
 
         size_pct = _size_pct_by_confidence(confidence)
-        gross   = available * size_pct      # confidence-scaled position
-        if gross < MIN_TRADE_THB:return {"action": "SKIP", "reason": f"Trade size {gross:.0f} THB < minimum 1000 THB"}
+        gross   = available * size_pct      # confidence-scaled position    
+        if gross < MIN_TRADE_THB:
+            return {"action": "SKIP", "reason": f"Trade size {gross:.0f} THB < minimum 1000 THB"}
         fee     = _calc_fee(gross)          # fee on open
         cost    = round(gross + fee, 2)     # total deducted from balance
         size_bw = gross / price_thb         # gold bought with gross amount (fee is overhead)
@@ -273,8 +273,8 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
         _save(state)
         print(f"[paper_engine.py] OPENED  {size_bw:.5f} bw @ {price_thb:,.0f} THB  "
               f"conf={confidence}% size={size_pct*100:.0f}%  fee={fee:.2f} THB  "
-              f"TP={price_thb*(1+TAKE_PROFIT_PCT):,.0f}  "
-              f"SL={price_thb*(1+STOP_LOSS_PCT):,.0f}  "
+              f"TP={price_thb*(1+TAKE_PROFIT_PCT):,.0f} (calculated)  "
+              f"SL={price_thb*(1+STOP_LOSS_PCT):,.0f} (calculated)  "
               f"Trail={TRAILING_SL_PCT*100:.1f}%")
         return {"action": "OPENED", "size_bw": size_bw,
                 "price_thb": price_thb, "cost_thb": gross, "fee_thb": fee,
@@ -316,16 +316,15 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
             
         state["open_positions"] = []
         # Cooldown: extra pause after a LOSS to prevent revenge trading
-        state["cooldown"]      = LOSS_COOLDOWN if any_loss else COOLDOWN_ROUNDS
-        _record_equity(state, price_thb)
-        _save(state)
+        cooldown_applied = LOSS_COOLDOWN if any_loss else COOLDOWN_ROUNDS
+        state["cooldown"] = cooldown_applied
         print(f"[paper_engine.py] CLOSED  BASKET  "
-              f"Total P&L {total_pnl:+.2f} THB  cooldown={COOLDOWN_ROUNDS} rounds")
+              f"Total P&L {total_pnl:+.2f} THB  cooldown={cooldown_applied} rounds")
         return {"action": "CLOSED", "pnl_thb": total_pnl, "trade": state["closed_trades"][-1]}
 
     # Tick down cooldown on HOLD too
     if cooldown > 0:
-        state["cooldown"] = cooldown - 1
+        state["cooldown"] = cooldown - 1    
         _save(state)
 
     return {"action": "HOLD", "reason": "Signal is HOLD or no matching position"}

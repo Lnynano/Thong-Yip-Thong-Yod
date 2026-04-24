@@ -333,7 +333,7 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
         date_str_today = _thai_date_str(date)
         _window_trades.setdefault(date_str_today, {})
         _window_used = _window_trades[date_str_today].get(candle_window, 0)
-        _quota_pressure = _window_used < 2  # min 2 per window
+        _quota_pressure = _window_used < 2  # 1 full cycle (2 transactions).
 
         with _quiet(), patch.object(fetch_module, "get_gold_price", return_value=window):
             agent = run_agent(quota_pressure=_quota_pressure, config=config)
@@ -356,7 +356,7 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                 confidence = 100
                 break
 
-        # ── Failsafe: window ending in ≤120 min, quota not met, still HOLD ────
+        # ── Failsafe: Force SELL if window ending with open position; Force BUY if quota not met. ────
         _mins_left = _minutes_until_window_end(date)
         if (decision == "HOLD" and
                 _mins_left is not None and _mins_left <= 120 and

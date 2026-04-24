@@ -4,12 +4,12 @@ Trade window and quota tracker for the Gold Trading Agent.
 
 Schedule:
   Monday–Friday : 6 trades/day across 3 windows
-    Window 1 : 00:00–02:00 and 06:00–11:59:59  (2 trades)
-    Window 2 : 12:00–17:59:59                   (2 trades)
-    Window 3 : 18:00–23:59:59                   (2 trades)
+    Window 1 : 06:00–11:59:59                   (1 full cycle: BUY + SELL)
+    Window 2 : 12:00–17:59:59                   (1 full cycle: BUY + SELL)
+    Window 3 : 18:00–23:59:59 and 00:00–02:00   (1 full cycle: BUY + SELL)
 
   Saturday–Sunday : 2 trades/day
-    Window 1 : 09:30–17:30                      (2 trades)
+    Window 1 : 09:30–17:30                      (1 full cycle: BUY + SELL)
 
 Analysis runs every 30 minutes inside active windows.
 A trade signal is only sent if the window quota is not yet filled.
@@ -104,7 +104,7 @@ def _current_window() -> dict | None:
 def can_trade_now() -> bool:
     """
     Return True if we are inside an active trading window.
-    There is no maximum cap — minimum 2 trades per window is a floor, not a ceiling.
+    There is no maximum cap — minimum 1 full cycle trade per window is a floor, not a ceiling.
     """
     return _current_window() is not None
 
