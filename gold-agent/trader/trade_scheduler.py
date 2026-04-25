@@ -64,17 +64,36 @@ def _today_str() -> str:
     return datetime.now(_THAI_TZ).strftime("%Y-%m-%d")
 
 
+def _window_anchor_date() -> str:
+    """
+    Return the anchor date for evening window.
+    If time is 00:00–02:00 → still belongs to yesterday's evening.
+    """
+    now = datetime.now(_THAI_TZ)
+
+    minutes = now.hour * 60 + now.minute
+
+    # midnight continuation window
+    if 0 <= minutes <= 2*60:
+        anchor = now - timedelta(days=1)
+    else:
+        anchor = now
+
+    return anchor.strftime("%Y-%m-%d")
+
+
+
 def _load_state() -> dict:
     if os.path.exists(_STATE_FILE):
         try:
             with open(_STATE_FILE, "r", encoding="utf-8") as f:
                 state = json.load(f)
-            if state.get("date") == _today_str():
+            if state.get("date") == _window_anchor_date():
                 return state
         except Exception:
             pass
     # Fresh state for today
-    return {"date": _today_str(), "windows": {}}
+    return {"date": _window_anchor_date(), "windows": {}}
 
 
 def _save_state(state: dict) -> None:
