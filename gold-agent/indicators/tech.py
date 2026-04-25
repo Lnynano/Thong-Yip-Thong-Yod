@@ -216,9 +216,9 @@ def calculate_bollinger_bands(df: pd.DataFrame,
         bandwidth = band_range / middle_val if middle_val > 0 else 0.0
 
         # Signal based on %B position
-        if percent_b >= 0.95:
+        if percent_b >= 0.80:
             signal = "OVERBOUGHT"
-        elif percent_b <= 0.05:
+        elif percent_b <= 0.20:
             signal = "OVERSOLD"
         else:
             signal = "NEUTRAL"
@@ -290,9 +290,9 @@ def calculate_confluence_score(df: pd.DataFrame, news_sentiment: str = "NEUTRAL"
             raw -= 1.5
 
         # Bollinger Bands %B component
-        if bb["percent_b"] < 0.30:
+        if bb["percent_b"] < 0.20:
             raw += 1.5
-        elif bb["percent_b"] > 0.70:
+        elif bb["percent_b"] > 0.80:
             raw -= 1.5
 
         # News sentiment component

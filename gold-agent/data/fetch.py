@@ -201,7 +201,7 @@ def get_macro_indicators() -> dict:
             if len(vix_s) >= 2:
                 vix_now  = float(vix_s.iloc[-1])
                 vix_prev = float(vix_s.iloc[-2])
-                vix_chg  = round(vix_now - vix_prev, 2)
+                vix_chg  = round((vix_now - vix_prev) / vix_prev * 100, 2)
                 if vix_now >= 30:
                     vix_sig = "HIGH_FEAR (BULLISH_GOLD)"
                 elif vix_now >= 20:
@@ -214,7 +214,7 @@ def get_macro_indicators() -> dict:
                     "value"     : round(vix_now, 2),
                     "change_pct": vix_chg,
                     "signal"    : vix_sig,
-                    "label"     : f"{vix_now:.2f}  ({vix_chg:+.2f})  {vix_sig}",
+                    "label"     : f"{vix_now:.2f}  ({vix_chg:+.2f}%)  {vix_sig}",
                 }
         except Exception as e:
             print(f"[fetch.py] VIX parse error: {e}")

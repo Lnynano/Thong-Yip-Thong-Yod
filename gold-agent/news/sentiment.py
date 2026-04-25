@@ -67,57 +67,48 @@ def get_gold_news(max_headlines: int = 5) -> list[str]:
         list[str]: List of headline strings (real or mock).
     """
     if _headlines_cache["value"] is not None and time.time() - _headlines_cache["ts"] < _HEADLINES_TTL:
-        print("[sentiment.py] Cache hit -> returning cached headlines (saved NewsAPI call)")
+        print("[sentiment.py] Cache hit -> returning cached headlines")
         return _headlines_cache["value"]
 
     api_key = os.getenv("NEWS_API_KEY", "").strip()
+    headlines = []
 
-    if not api_key or api_key == "your_key_here":
-        print("[sentiment.py] No NEWS_API_KEY. Using rotating mock headlines.")
-        return random.sample(MOCK_HEADLINE_POOL, min(max_headlines, len(MOCK_HEADLINE_POOL)))
+    if api_key and api_key != "your_key_here":
+        try:
+            url = "https://newsapi.org/v2/everything"
+            params = {
+                "q": "gold price OR gold market OR XAU",
+                "language": "en",
+                "sortBy": "publishedAt",
+                "pageSize": max_headlines,
+                "apiKey": api_key,
+            }
 
-    try:
-        url = "https://newsapi.org/v2/everything"
-        params = {
-            "q": "gold price OR gold market OR XAU",
-            "language": "en",
-            "sortBy": "publishedAt",
-            "pageSize": max_headlines,
-            "apiKey": api_key,
-        }
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
 
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
+            data = response.json()
+            articles = data.get("articles", [])
 
-        data = response.json()
-        articles = data.get("articles", [])
+            if articles:
+                headlines = [
+                    a.get("title", "").strip()
+                    for a in articles[:max_headlines]
+                    if a.get("title", "").strip() and a.get("title") != "[Removed]"
+                ]
+                if headlines:
+                    print(f"[sentiment.py] Fetched {len(headlines)} real headlines.")
 
-        if not articles:
-            print("[sentiment.py] No articles returned. Using mock headlines.")
-            return random.sample(MOCK_HEADLINE_POOL, min(max_headlines, len(MOCK_HEADLINE_POOL)))
+        except Exception as e:
+            print(f"[sentiment.py] NewsAPI error ({e}).")
 
-        headlines = [
-            a.get("title", "").strip()
-            for a in articles[:max_headlines]
-            if a.get("title", "").strip() and a.get("title") != "[Removed]"
-        ]
+    if not headlines:
+        print("[sentiment.py] Using rotating mock headlines.")
+        headlines = random.sample(MOCK_HEADLINE_POOL, min(max_headlines, len(MOCK_HEADLINE_POOL)))
 
-        if not headlines:
-            return random.sample(MOCK_HEADLINE_POOL, min(max_headlines, len(MOCK_HEADLINE_POOL)))
-
-        print(f"[sentiment.py] Fetched {len(headlines)} real headlines.")
-        _headlines_cache["value"] = headlines
-        _headlines_cache["ts"] = time.time()
-        return headlines
-
-    except requests.exceptions.Timeout:
-        print("[sentiment.py] NewsAPI timed out. Using mock headlines.")
-    except requests.exceptions.HTTPError as e:
-        print(f"[sentiment.py] NewsAPI HTTP error: {e}. Using mock headlines.")
-    except Exception as e:
-        print(f"[sentiment.py] Error fetching news: {e}. Using mock headlines.")
-
-    return random.sample(MOCK_HEADLINE_POOL, min(max_headlines, len(MOCK_HEADLINE_POOL)))
+    _headlines_cache["value"] = headlines
+    _headlines_cache["ts"] = time.time()
+    return headlines
 
 
 def _keyword_sentiment(headlines: list[str]) -> str:
