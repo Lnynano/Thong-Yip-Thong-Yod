@@ -483,8 +483,13 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         confidence = agent.get("confidence", 0)
         reasoning = agent.get("reasoning", "No reasoning.")
 
+        failsafe_triggered = False
+
         _mins_left = minutes_until_window_end()
         if (decision == "HOLD" and can_trade_now() and _mins_left is not None and _mins_left <= 10 and not current_window_quota_met()):
+            
+            failsafe_triggered = True   # ✅ ADD
+            
             agent = run_agent(quota_pressure=True, failsafe_pressure=True)
             decision = agent.get("decision", "HOLD")
             confidence = agent.get("confidence", 0)
@@ -499,7 +504,14 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
 
         from trader.paper_engine import execute_paper_trade, get_portfolio_summary, get_trade_history, get_equity_history, get_recent_outcomes
         if trade_mode and can_trade_now():
-            _min_conf = 50 if _quota_pressure else None
+
+            # ✅ FIX: failsafe override
+            if failsafe_triggered:
+                _min_conf = 50
+
+            else:
+                _min_conf = 50 if _quota_pressure else None
+                
             trade_result = execute_paper_trade(decision, confidence, thb_now, min_confidence=_min_conf)
         elif trade_mode and not can_trade_now(): trade_result = {"action": "SKIP", "reason": "Outside trading window"}
         else: trade_result = {"action": "DISABLED", "reason": "Trade mode is OFF"}

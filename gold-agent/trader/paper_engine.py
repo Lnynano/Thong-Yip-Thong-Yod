@@ -291,8 +291,13 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
             open_fee     = pos.get("open_fee", 0.0)
             net_proceeds = round(gross_proceeds - close_fee, 2)  # actually received
             total_fees   = round(open_fee + close_fee, 2)
-            pnl          = net_proceeds - pos["cost_thb"]        # net of ALL fees
-            pnl_pct      = pnl / pos["cost_thb"] * 100
+
+            # ✅ FIX: include open_fee
+            pnl = net_proceeds - pos["cost_thb"] - open_fee
+
+            # ✅ FIX: use full cost (gross + open fee)
+            total_cost = pos["cost_thb"] + open_fee
+            pnl_pct = pnl / total_cost * 100 if total_cost > 0 else 0.0
             
             total_pnl += pnl
             if pnl < 0: any_loss = True

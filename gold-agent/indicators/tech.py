@@ -46,7 +46,12 @@ def calculate_rsi(df: pd.DataFrame, period: int = 14) -> float:
     try:
         if df.empty or "Close" not in df.columns:
             print("[tech.py] RSI: Empty DataFrame or missing 'Close' column.")
-            return 0.0
+            return 50.0   # ✅ FIX: was 0.0
+
+        if len(df) < period:
+            print(f"[tech.py] RSI: Not enough data (<{period}).")
+            return 50.0   # ✅ HARDEN: insufficient data
+
 
         close = df["Close"].copy()
         delta = close.diff()
@@ -62,6 +67,11 @@ def calculate_rsi(df: pd.DataFrame, period: int = 14) -> float:
         rsi = 100.0 - (100.0 / (1.0 + rs))
 
         rsi_value = float(rsi.iloc[-1])
+
+        if np.isnan(rsi_value):
+            print("[tech.py] RSI: NaN detected.")
+            return 50.0   # ✅ HARDEN
+
         print(f"[tech.py] RSI({period}): {rsi_value:.2f}")
         return round(rsi_value, 2)
 
