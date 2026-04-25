@@ -276,11 +276,6 @@ def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = 
                 if bb["percent_b"] < 0.2:   buy_score  += 1
                 elif bb["percent_b"] > 0.8: sell_score += 1
 
-            # MACD crossover
-            if use_macd:
-                if macd["macd"] > macd["signal"]:  buy_score  += 1
-                else:                               sell_score += 1
-
             # Daily market bias (cached — free, runs once/day)
             daily_bias = "Sideways"
             daily_strength = "Weak"
