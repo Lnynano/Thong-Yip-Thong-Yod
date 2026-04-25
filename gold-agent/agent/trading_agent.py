@@ -73,11 +73,13 @@ get_indicators also returns DXY and VIX — use them:
   VIX < 15 → complacency → reduced safe-haven demand (neutral/bearish)
 
 # DECISION CRITERIA
-- BUY  : RSI < 40 AND/OR MACD histogram positive AND/OR bullish macro news
+- BUY  : RSI < 40 AND expected upside exceeds 200 THB spread AND/OR MACD histogram positive AND/OR bullish macro news
          Confidence >= 65% required
-- SELL : RSI > 65 AND/OR MACD histogram negative AND/OR bearish macro news
+- SELL : RSI > 65 AND expected downside exceeds 200 THB spread AND/OR MACD histogram negative AND/OR bearish macro news
          Confidence >= 65% required
 - HOLD : Mixed signals, RSI 40-65, contradicting indicators, low news conviction
+
+Note: Scoring gives early warning alerts at RSI < 40 / RSI > 65. True overbought/oversold limits remain 70/30.
 
 # OUTPUT FORMAT (machine-readable JSON only)
 After calling all tools, respond with ONLY this JSON (no other text):
@@ -262,9 +264,9 @@ def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = 
 
             # RSI (always on — core signal)
             if rsi < 30:   buy_score  += 2
-            elif rsi < 45: buy_score  += 1
+            elif rsi < 40: buy_score  += 1
             if rsi > 70:   sell_score += 2
-            elif rsi > 60: sell_score += 1
+            elif rsi > 65: sell_score += 1
 
             # MACD histogram
             if use_macd:
@@ -396,7 +398,7 @@ def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = 
                     "bias":            "BUY" if buy_score > sell_score else "SELL" if sell_score > buy_score else "NEUTRAL",
                     "daily_trend":     daily_bias,
                     "trend_strength":  daily_strength,
-                    "note": "Scores are hints only — use your judgment. News can override math.",
+                    "note": "Scores are hints only — use your judgment. Pre-scored news sentiment uses keyword lexicon; use get_news for deep LLM evaluation.",
                 },
                 "rsi": {
                     "value"  : rsi,
@@ -660,8 +662,9 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, con
 
         if failsafe_pressure:
             failsafe_note = (
-                "\n\nCRITICAL FAILSAFE — WINDOW CLOSING IN UNDER 10 MINUTES: The minimum "
+                "\n\nCRITICAL FAILSAFE — WINDOW CLOSING: The minimum "
                 "trade quota for this window has NOT been met. You MUST output BUY or SELL. "
+                "Override constraint #4 for this window-closing situation only. "
                 "HOLD is not acceptable under any circumstances. Pick the stronger directional "
                 "signal from the available data right now. This is a hard competition requirement."
             )

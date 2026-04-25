@@ -166,6 +166,8 @@ Return JSON only, no other text:
 # ─────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────
+import threading
+_analysis_lock = threading.Lock()
 _analysis_in_progress = False
 
 
@@ -192,19 +194,21 @@ def get_daily_market() -> dict:
         print(f"[daily_market_agent.py] Cache hit -> {cache.get('daily_trend')} / {cache.get('trend_strength')}")
         return cache
 
-    # Prevent duplicate API calls if two refreshes fire at the same time
-    if _analysis_in_progress:
-        print("[daily_market_agent.py] Analysis already running — returning stale cache")
-        return cache or _DEFAULT
+    # Thread-safe flag management
+    with _analysis_lock:
+        if _analysis_in_progress:
+            print("[daily_market_agent.py] Analysis already running — returning stale cache")
+            return cache or _DEFAULT
+        _analysis_in_progress = True
 
     print("[daily_market_agent.py] Cache stale — running daily analysis...")
-    _analysis_in_progress = True
     try:
         result = _run_analysis()
         _save_cache(result)
         return result
     finally:
-        _analysis_in_progress = False
+        with _analysis_lock:
+            _analysis_in_progress = False
 
 
 if __name__ == "__main__":
