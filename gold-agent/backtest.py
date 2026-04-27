@@ -112,7 +112,7 @@ def _write_candle_log(rows: list[dict]) -> None:
     if not rows: return
     os.makedirs(_DATA_DIR, exist_ok=True)
     fieldnames = ["candle", "date", "price_usd", "price_thb", "decision",
-                  "confidence", "action", "window", "pnl_thb", "equity_thb"]
+                  "confidence", "action", "window", "pnl_thb", "equity_thb", "reasoning"]
     with open(_CANDLE_LOG, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
@@ -420,6 +420,7 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                 "action": "OUT_OF_WINDOW",
                 "pnl_thb": 0.0,
                 "equity_thb": round(balance_thb + sum(p["size_bw"] * price_thb for p in open_positions), 2),
+                "reasoning": "Outside trading window.",
             })
             continue
 
@@ -459,16 +460,22 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
 
         def _mock_news():
             import json
+            # ── Load REAL news file by month, fallback to Neutral ──────────
+            curr_date = _to_thai(date).strftime("%Y-%m-%d")
+            curr_ym = _to_thai(date).strftime("%Y_%m")
+            news_file = os.path.join(_DATA_DIR, f"historical_news_{curr_ym}.json")
             try:
-                with open("data/historical_news_2026_03.json", "r") as f:
+                with open(news_file, "r", encoding="utf-8") as f:
                     news_db = json.load(f)
-                curr_date = date.strftime("%Y-%m-%d")
                 active_news = {"sentiment": "Neutral", "headline": "No major news.", "impact": "Low"}
                 for d_key in sorted(news_db.keys()):
                     if d_key <= curr_date: active_news = news_db[d_key]
                     else: break
-                return active_news
-            except:
+                # Strip internal _headlines key if present
+                return {k: v for k, v in active_news.items() if not k.startswith("_")}
+            except FileNotFoundError:
+                return {"sentiment": "Neutral", "headline": "No news file for this period. Run scripts/fetch_historical_news.py first.", "impact": "Low"}
+            except Exception:
                 return {"sentiment": "Neutral", "headline": "Stable market conditions.", "impact": "Low"}
 
         import agent.daily_market_agent as dm_module
@@ -513,14 +520,27 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
         
         _is_invalid_sell = (decision == "SELL" and not open_positions)
         _is_invalid_buy = (decision == "BUY" and len(open_positions) >= 1)
-        # Minimum hold: 90 min UNLESS failsafe is about to trigger (let it close out)
+
+        # ── CROSS-WINDOW PREVENTION (HARD RULE) ─────────────────────────────
+        # If holding a position and window is about to end, force SELL immediately.
+        # This guarantees the trade closes in the same window it opened.
+        _window_almost_over = (_mins_left is not None and _mins_left <= _int_mins)
+        if open_positions and _window_almost_over:
+            decision = "SELL"
+            confidence = 100
+            reasoning = "[WINDOW-END] Forced SELL to keep trade within window boundary."
+
+        # ── MINIMUM HOLD (within window only) ───────────────────────────────
+        # Allow min-hold only if the window won't end before hold time is up.
         _min_hold_minutes = 90
         _too_early_to_sell = False
-        if decision == "SELL" and open_positions and (_mins_left is None or _mins_left > _failsafe_thresh):
+        if decision == "SELL" and open_positions and not _window_almost_over and (_mins_left is None or _mins_left > _failsafe_thresh):
             entry_dt = open_positions[0].get("entry_dt")
             if entry_dt is not None:
                 held_minutes = (date - entry_dt).total_seconds() / 60
-                if held_minutes < _min_hold_minutes:
+                mins_left_safe = _mins_left if _mins_left is not None else 9999
+                # Only enforce min-hold if there's enough window time remaining
+                if held_minutes < _min_hold_minutes and mins_left_safe > _min_hold_minutes:
                     _too_early_to_sell = True
                     decision = "HOLD"
                     reasoning = f"[HOLD] Min hold: {held_minutes:.0f}/{_min_hold_minutes}min"
@@ -665,6 +685,7 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
             "window": candle_window,
             "pnl_thb": pnl_thb,
             "equity_thb": equity,
+            "reasoning": reasoning,
         })
 
     print("\r" + " " * 70 + "\r", end="")
