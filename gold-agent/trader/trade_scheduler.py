@@ -200,6 +200,12 @@ def minutes_until_window_end() -> int | None:
     now = datetime.now(_THAI_TZ)
     minutes = now.hour * 60 + now.minute
     for w in _get_windows():
+        if any(start == 0 for start, end in w["ranges"]) and any(end == 1439 for start, end in w["ranges"]):
+            next_day_end = max(end for start, end in w["ranges"] if start == 0)
+            if minutes >= 18 * 60:
+                return (1439 - minutes) + next_day_end + 1
+            elif minutes <= next_day_end:
+                return next_day_end - minutes
         for start, end in w["ranges"]:
             if start <= minutes <= end:
                 return end - minutes
