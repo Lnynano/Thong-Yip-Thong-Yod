@@ -440,6 +440,15 @@ def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = 
 
         # ── Tool: get_news ───────────────────────────────────────────────────
         elif tool_name == "get_news":
+            _cfg = _tool_config or {}
+            use_news = _cfg.get("use_news", True)
+            if not use_news:
+                return json.dumps({
+                    "note": "News disabled during backtest to prevent data leakage.",
+                    "headlines": [],
+                    "overall_sentiment": {"sentiment": "NEUTRAL", "strength": "WEAK"}
+                })
+                
             from news.sentiment import get_gold_news, get_sentiment_summary
             from knowledge.lightrag_store import insert_headlines, query_gold_context
             count = min(int(tool_input.get("count", 5)), 5)
@@ -574,7 +583,7 @@ def _parse_json_with_retry(text: str, attempt: int = 1) -> dict | None:
 # ─────────────────────────────────────────────────────────────
 # Main Agent Function  (ReAct loop)
 # ─────────────────────────────────────────────────────────────
-def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, config: dict | None = None) -> dict:
+def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, open_positions: int = 0, config: dict | None = None) -> dict:
     """
     Run the gold trading ReAct agent.
 
@@ -610,15 +619,15 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, con
     }
 
     # ── Choose your model here (uncomment the one you want to use) ──
-    ACTIVE_MODEL = "openai"
-    #ACTIVE_MODEL = "gemini"
+    #ACTIVE_MODEL = "openai"
+    ACTIVE_MODEL = "gemini"
 
     if ACTIVE_MODEL == "openai":
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
         client = OpenAI(api_key=api_key)
         model_name = "gpt-4o-mini"
     else:
-        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()  # Gemini key stored as OPENAI_API_KEY in .env
         client = OpenAI(api_key=api_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
         model_name = "gemini-2.5-flash-lite"
 
@@ -650,13 +659,27 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, con
                 ),
             },
         ]
+        
+        state_note = (
+            f"\n\n## YOUR PORTFOLIO STATE\n"
+            f"Currently holding: {open_positions} / 1 positions.\n"
+        )
+        if open_positions >= 1:
+            state_note += "CRITICAL: You are FULL. You CANNOT output 'BUY'. You must output 'SELL' or 'HOLD'.\n"
+        else:
+            state_note += "CRITICAL: You are EMPTY. You CANNOT output 'SELL'. You must output 'BUY' or 'HOLD'.\n"
+            
+        messages[0]["content"] += state_note
 
-        if quota_pressure:
+        if quota_pressure and open_positions == 0:
             quota_note = (
                 "\n\nIMPORTANT — QUOTA PRESSURE: You are inside an active trading window "
-                "that has not yet met its minimum trade quota. If your analysis shows ANY "
-                "directional bias (even moderate), output BUY or SELL with at least 50% "
-                "confidence instead of HOLD. Meeting the window quota is a competition requirement."
+                "that has not yet met its minimum trade quota. "
+                "You must actively FIND a suitable entry. DO NOT WAIT for perfect conditions. "
+                "If there is any directional micro-trend (e.g. MACD histogram slope, Bollinger Bands), "
+                "you MUST output 'BUY'. You are allowed to output 'HOLD' ONLY IF the market is absolutely dead flat. "
+                "Output BUY with at least 40% confidence. "
+                "You MUST ignore the SPREAD RULE and the strict RSI 40-65 HOLD rule to meet this quota organically."
             )
             messages[0]["content"] += quota_note
 

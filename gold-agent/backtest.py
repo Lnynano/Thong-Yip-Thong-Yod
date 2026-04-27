@@ -121,9 +121,11 @@ def _write_candle_log(rows: list[dict]) -> None:
 def _write_trade_log(trades: list[dict]) -> None:
     if not trades: return
     os.makedirs(_DATA_DIR, exist_ok=True)
-    fieldnames = ["trade_no", "entry_date", "exit_date", "entry_price",
-                  "exit_price", "size_bw", "cost_thb", "open_fee",
-                  "close_fee", "total_fees", "pnl_thb", "pnl_pct", "outcome"]
+    fieldnames = [
+        "Buy_Price/Gold_Baht", "Buy Date", "Buy Amount", "Buy Weight (g)",
+        "Sell_Price/Gold_Baht", "Sell Date", "Sell Amount", "Profit",
+        "Days Held", "%Profit/Deal", "%Profit/Year (Annual)", "Capital x days/year"
+    ]
     with open(_TRADE_LOG, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
@@ -142,22 +144,94 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
     _start_time = time.time()
     _cost_before = _get_cost_summary()
 
-    # ── [SUB-SECTION: DATA FETCHING] ──────────────────────────────────────────
-    df_full = None
-    interval_used = ""
+    _cfg = config or {}
+    _start_date = _cfg.get("start_date")
+    _end_date = _cfg.get("end_date")
+    interval = _cfg.get("interval", "1h")
 
     print("")
     print("  Fetching price data...")
-    try:
-        with _quiet():
-            raw = yf.download("GC=F", period="60d", interval="1h", progress=False, auto_adjust=True)
-        if not raw.empty and len(raw) >= MIN_ROWS + 5:
-            if isinstance(raw.columns, pd.MultiIndex): raw.columns = raw.columns.get_level_values(0)
-            raw.index.name = "Date"
-            df_full = raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
-            interval_used = "1h"
-    except Exception:
-        pass
+    df_full = None
+    cache_file = os.path.join(_DATA_DIR, f"historical_prices_{interval}.csv")
+    ext_cache_file = os.path.join(_DATA_DIR, f"historical_prices_{interval}_extended.csv")
+    
+    if use_cache:
+        target_cache = ext_cache_file if os.path.exists(ext_cache_file) else cache_file
+        if os.path.exists(target_cache):
+            try:
+                print(f"  [Info] Loading data from local cache ({target_cache})...")
+                df_full = pd.read_csv(target_cache, index_col="Date", parse_dates=True)
+                if _start_date:
+                    start_dt = pd.to_datetime(_start_date, utc=True)
+                    cache_min = df_full.index.min()
+                    if cache_min.tz is None: cache_min = cache_min.tz_localize("UTC")
+                    else: cache_min = cache_min.tz_convert("UTC")
+                    if start_dt - pd.Timedelta(days=5) < cache_min:
+                        print(f"  [Info] Local cache is too recent (starts {cache_min.date()}). Re-fetching...")
+                        df_full = None
+                if df_full is not None:
+                    interval_used = interval
+            except Exception as e:
+                print(f"  [Error] Failed to load cache: {e}")
+                df_full = None
+
+    if df_full is None:
+        try:
+            with _quiet():
+                period = "730d" if interval == "1h" else "60d"
+                raw = yf.download("GC=F", period=period, interval=interval, progress=False, auto_adjust=True)
+                
+                valid_raw = False
+                if not raw.empty and len(raw) >= MIN_ROWS + 5:
+                    if isinstance(raw.columns, pd.MultiIndex): raw.columns = raw.columns.get_level_values(0)
+                    raw.index.name = "Date"
+                    
+                    if _start_date:
+                        start_dt = pd.to_datetime(_start_date, utc=True)
+                        raw_min = raw.index.min()
+                        if raw_min.tz is None: raw_min = raw_min.tz_localize("UTC")
+                        else: raw_min = raw_min.tz_convert("UTC")
+                        if start_dt - pd.Timedelta(days=5) < raw_min:
+                            print(f"  [Info] YFinance {interval} data is truncated (starts {raw_min.date()}).")
+                        else:
+                            valid_raw = True
+                    else:
+                        valid_raw = True
+
+                if valid_raw:
+                    df_full = raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
+                    os.makedirs(_DATA_DIR, exist_ok=True)
+                    df_full.to_csv(cache_file)
+                    interval_used = interval
+                elif interval in ["30m", "15m"]:
+                    print(f"  [Info] Falling back to 1h data + resampling for {interval}...")
+                    cache_1h = os.path.join(_DATA_DIR, "historical_prices_1h.csv")
+                    raw_1h = None
+                    if use_cache and os.path.exists(cache_1h):
+                        raw_1h = pd.read_csv(cache_1h, index_col="Date", parse_dates=True)
+                        if _start_date:
+                            start_dt = pd.to_datetime(_start_date, utc=True)
+                            c1h_min = raw_1h.index.min()
+                            if c1h_min.tz is None: c1h_min = c1h_min.tz_localize("UTC")
+                            else: c1h_min = c1h_min.tz_convert("UTC")
+                            if start_dt - pd.Timedelta(days=5) < c1h_min:
+                                raw_1h = None
+                                
+                    if raw_1h is None:
+                        raw = yf.download("GC=F", period="730d", interval="1h", progress=False, auto_adjust=True)
+                        if not raw.empty:
+                            if isinstance(raw.columns, pd.MultiIndex): raw.columns = raw.columns.get_level_values(0)
+                            raw.index.name = "Date"
+                            raw_1h = raw[["Open", "High", "Low", "Close", "Volume"]].dropna()
+                            raw_1h.to_csv(cache_1h)
+                            
+                    if raw_1h is not None and not raw_1h.empty:
+                        df_full = raw_1h
+                        pd_freq = interval.replace("m", "min")
+                        df_full = df_full.resample(pd_freq).ffill()
+                        interval_used = interval
+        except Exception as e:
+            print("FETCH ERROR:", e)
 
     if df_full is None or len(df_full) < MIN_ROWS + 5:
         try:
@@ -173,10 +247,68 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
     if df_full is None or df_full.empty:
         return {"daily_log": [], "closed_trades": [], "open_position": None, "summary": {"error": "No data fetched"}}
 
-    if len(df_full) > MIN_ROWS + MAX_CANDLES:
-        df_full = df_full.iloc[-(MIN_ROWS + MAX_CANDLES):]
+    # --- SYNTHETIC WEEKEND DATA ---
+    if interval_used in ["1h", "30m", "15m"]:
+        pd_freq = interval_used.replace("m", "min").replace("h", "H")
+        try:
+            if not isinstance(df_full.index, pd.DatetimeIndex):
+                df_full.index = pd.to_datetime(df_full.index)
+            if df_full.index.tz is None:
+                df_full.index = df_full.index.tz_localize("UTC")
+            else:
+                df_full.index = df_full.index.tz_convert("UTC")
 
-    total_candles = len(df_full) - MIN_ROWS + 1
+            start_th = df_full.index.min().tz_convert("Asia/Bangkok")
+            end_th = df_full.index.max().tz_convert("Asia/Bangkok")
+            
+            all_hours = pd.date_range(
+                start=start_th.replace(hour=0, minute=0, second=0), 
+                end=end_th.replace(hour=23, minute=59, second=59), 
+                freq=pd_freq
+            )
+            
+            weekend_mask = (all_hours.dayofweek >= 5) & (all_hours.hour >= 9) & (all_hours.hour <= 17)
+            weekend_hours = all_hours[weekend_mask].tz_convert("UTC")
+            
+            combined_index = df_full.index.union(weekend_hours).sort_values()
+            df_full = df_full.reindex(combined_index)
+            
+            df_full["Close"] = df_full["Close"].ffill()
+            df_full["Open"] = df_full["Open"].fillna(df_full["Close"])
+            df_full["High"] = df_full["High"].fillna(df_full["Close"])
+            df_full["Low"] = df_full["Low"].fillna(df_full["Close"])
+            df_full["Volume"] = df_full["Volume"].fillna(0)
+            for col in ["DXY", "VIX", "USDTHB"]:
+                if col in df_full.columns:
+                    df_full[col] = df_full[col].ffill()
+            df_full.dropna(inplace=True)
+        except Exception as e:
+            print(f"Failed to generate synthetic weekend data: {e}")
+
+    import numpy as np
+    
+    if len(df_full) > MIN_ROWS + MAX_CANDLES and not (_start_date and _end_date):
+        df_full = df_full.iloc[-(MIN_ROWS + MAX_CANDLES):]
+        total_candles = len(df_full) - MIN_ROWS + 1
+    elif _start_date and _end_date:
+        try:
+            th_index = df_full.index.tz_convert("Asia/Bangkok")
+        except TypeError:
+            th_index = df_full.index.tz_localize("UTC").tz_convert("Asia/Bangkok")
+        date_strs = th_index.strftime("%Y-%m-%d")
+        in_window = (date_strs >= _start_date) & (date_strs <= _end_date)
+        if not in_window.any():
+            return {"daily_log": [], "closed_trades": [], "open_position": None, "summary": {"error": f"No data for {_start_date} to {_end_date}"}}
+            
+        first_idx = int(np.argmax(in_window))
+        last_idx = len(in_window) - 1 - int(np.argmax(in_window[::-1]))
+        
+        start_idx = max(0, first_idx - (MIN_ROWS - 1))
+        df_full = df_full.iloc[start_idx : last_idx + 1]
+        
+        total_candles = last_idx - first_idx + 1
+    else:
+        total_candles = len(df_full) - MIN_ROWS + 1
 
     _cfg = config or {}
     _flag_names = ["use_macd", "use_bb", "use_news", "use_dxy_vix",
@@ -225,34 +357,61 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
         minutes = local.hour * 60 + local.minute
         windows = _WEEKEND_LOGICAL if local.weekday() >= 5 else _WEEKDAY_LOGICAL
         for w in windows:
+            total_end = max(end for start, end in w["ranges"])
+            # If the window spans past midnight (e.g. evening ends at 02:00, but has a range ending at 23:59)
+            if any(start == 0 for start, end in w["ranges"]) and any(end == 1439 for start, end in w["ranges"]):
+                next_day_end = max(end for start, end in w["ranges"] if start == 0)
+                if minutes >= 18 * 60:
+                    return (1439 - minutes) + next_day_end + 1
+                elif minutes <= next_day_end:
+                    return next_day_end - minutes
             for start, end in w["ranges"]:
                 if start <= minutes <= end: return end - minutes
         return None
 
     def _thai_date_str(dt) -> str:
-        return str(_to_thai(dt).date())
+        local = _to_thai(dt)
+        minutes = local.hour * 60 + local.minute
+        if 0 <= minutes <= 2 * 60:
+            local -= _dt.timedelta(days=1)
+        return str(local.date())
 
     _window_trades: dict = {}
     import data.fetch as fetch_module
     from agent.trading_agent import run_agent
 
     # ── [SUB-SECTION: THE MAIN CANDLE-BY-CANDLE LOOP] ─────────────────────────
+    evaluated_candles = 0
     for i in range(MIN_ROWS - 1, len(df_full)):
-        window = df_full.iloc[: i + 1].copy()
         date = df_full.index[i]
-        price_usd = float(window["Close"].iloc[-1])
-        price_thb = usd_to_thb_per_bw(price_usd)
-        candle_no = i - MIN_ROWS + 2
+        date_str_today_anchor = _thai_date_str(date)
 
-        pct_done = candle_no / total_candles * 100
-        bar = _bar(candle_no, total_candles, width=30)
-        status = f"[{bar}] {candle_no}/{total_candles} ({pct_done:.0f}%)"
+        if _start_date and date_str_today_anchor < _start_date:
+            continue
+        if _end_date and date_str_today_anchor > _end_date:
+            break
+
+            
+        evaluated_candles += 1
+        window = df_full.iloc[: i + 1].copy()
+        price_usd = float(window["Close"].iloc[-1])
+        if "USDTHB" in window.columns:
+            usd_thb_rate_dynamic = float(window["USDTHB"].iloc[-1])
+            thb_per_oz = price_usd * usd_thb_rate_dynamic
+            thb_per_gram = thb_per_oz / TROY_OZ_GRAMS
+            price_thb = round(thb_per_gram * BAHT_WEIGHT_GRAMS * PURITY, 2)
+        else:
+            price_thb = usd_to_thb_per_bw(price_usd)
+
+        pct_done = evaluated_candles / total_candles * 100 if total_candles > 0 else 100
+        bar = _bar(evaluated_candles, total_candles, width=30)
+        status = f"[{bar}] {evaluated_candles}/{total_candles} ({pct_done:.0f}%)"
         print(f"\r  Running {status}  B{balance_thb:,.0f}", end="", flush=True)
 
         candle_window = _get_candle_window(date)
         if candle_window is None:
             daily_log.append({
-                "candle": candle_no,
+                "candle": evaluated_candles,
                 "date": _to_thai(date).strftime("%Y-%m-%d %H:%M"),
                 "price_usd": price_usd,
                 "price_thb": price_thb,
@@ -267,11 +426,23 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
         date_str_today = _thai_date_str(date)
         _window_trades.setdefault(date_str_today, {})
         _window_used = _window_trades[date_str_today].get(candle_window, 0)
-        _quota_pressure = _window_used < 2
+        _is_weekend = _to_thai(date).weekday() >= 5
+        _window_quota = 1 if _is_weekend else 2
+        _quota_pressure = _window_used < _window_quota
 
-        with _quiet(), patch.object(fetch_module, "get_gold_price", return_value=window):
-            agent = run_agent(quota_pressure=_quota_pressure, config=config)
+        def _mock_macro():
+            d_val = float(window["DXY"].iloc[-1]) if "DXY" in window.columns else 100.0
+            v_val = float(window["VIX"].iloc[-1]) if "VIX" in window.columns else 15.0
+            return {
+                "dxy": {"value": d_val, "change_pct": 0.0, "signal": "NEUTRAL"},
+                "vix": {"value": v_val, "change_pct": 0.0, "signal": "MODERATE"}
+            }
 
+        with _quiet(), \
+             patch.object(fetch_module, "get_gold_price", return_value=window), \
+             patch.object(fetch_module, "get_macro_indicators", side_effect=_mock_macro):
+            agent = run_agent(quota_pressure=_quota_pressure, open_positions=len(open_positions), config=config)
+            
         decision = agent["decision"]
         confidence = agent["confidence"]
         reasoning = agent["reasoning"]
@@ -290,22 +461,51 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                 break
 
         _mins_left = _minutes_until_window_end(date)
-        if (decision == "HOLD" and _mins_left is not None and _mins_left <= 120 and _window_used < 2):
+        
+        _int_mins = 60
+        if interval_used == "30m": _int_mins = 30
+        elif interval_used == "15m": _int_mins = 15
+        
+        _trades_needed = max(0, _window_quota - _window_used)
+        _failsafe_thresh = _int_mins * max(2, _trades_needed * 2)
+        
+        _is_invalid_sell = (decision == "SELL" and not open_positions)
+        _is_invalid_buy = (decision == "BUY" and len(open_positions) >= 1)
+        
+        _needs_failsafe = (_window_used < _window_quota or len(open_positions) > 0)
+        
+        if ((decision == "HOLD" or _is_invalid_sell or _is_invalid_buy) and _mins_left is not None and _mins_left <= _failsafe_thresh and _needs_failsafe):
+
+
             with _quiet(), patch.object(fetch_module, "get_gold_price", return_value=window):
-                agent = run_agent(quota_pressure=True, failsafe_pressure=True, config=config)
+                agent = run_agent(quota_pressure=True, failsafe_pressure=True, open_positions=len(open_positions), config=config)
             decision = agent["decision"]
             confidence = agent["confidence"]
             reasoning = agent["reasoning"]
-            if decision == "HOLD":
-                decision = "BUY"
-                confidence = 51
-                reasoning = "[FAILSAFE] Window closing, quota not met. Forced BUY signal."
+            
+            _is_invalid_sell_fs = (decision == "SELL" and not open_positions)
+            _is_invalid_buy_fs = (decision == "BUY" and len(open_positions) >= 1)
+            if decision == "HOLD" or _is_invalid_sell_fs or _is_invalid_buy_fs:
+                if open_positions:
+                    decision = "SELL"
+                    confidence = 100
+                    reasoning = "[FAILSAFE] Window closing. Forced SELL to free capital and meet quota."
+                else:
+                    decision = "BUY"
+                    confidence = 51
+                    reasoning = "[FAILSAFE] Window closing. Forced BUY to meet quota."
 
-        _effective_gate = 50 if _quota_pressure else CONFIDENCE_GATE
+        _effective_gate = 40 if _quota_pressure else CONFIDENCE_GATE
+        
+        # Decrement cooldown organically if agent outputs HOLD
+        if decision == "HOLD" and cooldown > 0:
+            cooldown -= 1
+            
         if confidence < _effective_gate:
             action = "SKIP"
             if cooldown > 0: cooldown -= 1
-        elif cooldown > 0 and decision == "BUY":
+            
+        elif cooldown > 0 and decision == "BUY" and not _quota_pressure:
             action = "SKIP"
             cooldown -= 1
 
@@ -353,18 +553,29 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                 if pos_pnl_thb < 0: any_loss = True
                 total_pnl_thb += pos_pnl_thb
                 balance_thb += net_proceeds
+                
+                # Extended log metrics
+                entry_dt = datetime.strptime(pos["entry_date"], "%Y-%m-%d %H:%M")
+                exit_dt = datetime.strptime(_to_thai(date).strftime("%Y-%m-%d %H:%M"), "%Y-%m-%d %H:%M")
+                days_held = max((exit_dt - entry_dt).total_seconds() / 86400.0, 0.0417) # Min 1 hour
+                buy_weight_g = round(pos["size_bw"] * BAHT_WEIGHT_GRAMS, 4)
+                pnl_frac = pos_pnl_thb / pos["cost_thb"]
+                pct_profit_year = round(pnl_frac * (365.0 / days_held) * 100, 2)
+                cap_x_days_year = round(pos["cost_thb"] * (days_held / 365.0), 2)
+
                 trade = {
-                    "entry_date": pos["entry_date"],
-                    "exit_date": _to_thai(date).strftime("%Y-%m-%d %H:%M"),
-                    "entry_price": pos["entry_price"],
-                    "exit_price": price_thb,
-                    "size_bw": round(pos["size_bw"], 6),
-                    "cost_thb": pos["cost_thb"],
-                    "open_fee": open_fee,
-                    "close_fee": close_fee,
-                    "total_fees": total_fees,
-                    "pnl_thb": pos_pnl_thb,
-                    "pnl_pct": pnl_pct,
+                    "Buy_Price/Gold_Baht": pos["entry_price"],
+                    "Buy Date": pos["entry_date"],
+                    "Buy Amount": pos["cost_thb"],
+                    "Buy Weight (g)": buy_weight_g,
+                    "Sell_Price/Gold_Baht": price_thb,
+                    "Sell Date": exit_dt.strftime("%Y-%m-%d %H:%M"),
+                    "Sell Amount": round(gross_proceeds, 2),
+                    "Profit": pos_pnl_thb,
+                    "Days Held": round(days_held, 4),
+                    "%Profit/Deal": pnl_pct,
+                    "%Profit/Year (Annual)": pct_profit_year,
+                    "Capital x days/year": cap_x_days_year,
                     "outcome": outcome,
                 }
                 closed_trades.append(trade)
@@ -372,7 +583,6 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
             pnl_thb = total_pnl_thb
             cooldown = LOSS_COOLDOWN if any_loss else COOLDOWN_ROUNDS
             action = "CLOSED [BASKET]"
-            _window_trades[date_str_today][candle_window] = _window_trades[date_str_today].get(candle_window, 0) + 1
 
         elif decision == "SELL" and not open_positions:
             action = "SKIP"
@@ -382,7 +592,7 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
         equity = round(balance_thb + sum(p["size_bw"] * price_thb for p in open_positions), 2)
 
         daily_log.append({
-            "candle": candle_no,
+            "candle": evaluated_candles,
             "date": _to_thai(date).strftime("%Y-%m-%d %H:%M"),
             "price_usd": price_usd,
             "price_thb": price_thb,
@@ -407,7 +617,7 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
 
     wins = [t for t in closed_trades if t["outcome"] == "WIN"]
     losses = [t for t in closed_trades if t["outcome"] == "LOSS"]
-    total_pnl = sum(t["pnl_thb"] for t in closed_trades)
+    total_pnl = sum(t["Profit"] for t in closed_trades)
     total_fees = sum(t.get("total_fees", 0.0) for t in closed_trades)
     win_rate = len(wins) / len(closed_trades) * 100 if closed_trades else 0.0
     ret_pct = (final_equity - INITIAL_BALANCE_THB) / INITIAL_BALANCE_THB * 100
@@ -420,9 +630,40 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
     except Exception:
         calendar_days = candles_run
 
-    avg_win = sum(t["pnl_thb"] for t in wins) / len(wins) if wins else 0.0
-    avg_loss = abs(sum(t["pnl_thb"] for t in losses)) / len(losses) if losses else 0.0
+    import numpy as np
+
+    avg_win = sum(t["Profit"] for t in wins) / len(wins) if wins else 0.0
+    avg_loss = abs(sum(t["Profit"] for t in losses)) / len(losses) if losses else 0.0
     rr_ratio = round(avg_win / avg_loss, 2) if avg_loss > 0 else 0.0
+    expectancy = round((win_rate/100.0 * avg_win) - ((1.0 - win_rate/100.0) * avg_loss), 2)
+
+    if closed_trades:
+        ann_rets = [t["%Profit/Year (Annual)"] for t in closed_trades]
+        best_ann = round(np.max(ann_rets), 2)
+        worst_ann = round(np.min(ann_rets), 2)
+        median_ann = round(np.median(ann_rets), 2)
+        top_10_ann = round(np.percentile(ann_rets, 90), 2)
+        bot_10_ann = round(np.percentile(ann_rets, 10), 2)
+        avg_cap_year = round(sum(t["Capital x days/year"] for t in closed_trades), 2)
+    else:
+        best_ann = worst_ann = median_ann = top_10_ann = bot_10_ann = avg_cap_year = 0.0
+
+    unrealized = sum((p["size_bw"] * last_price_thb) - p["cost_thb"] for p in open_positions)
+
+    # Calculate Sharpe Ratio
+    daily_equity = {}
+    for log in daily_log:
+        daily_equity[log["date"][:10]] = log["equity_thb"]
+    if len(daily_equity) > 1:
+        eq_series = pd.Series(daily_equity)
+        daily_rets = eq_series.pct_change().dropna()
+        sharpe = round((daily_rets.mean() / daily_rets.std()) * np.sqrt(252), 2) if daily_rets.std() != 0 else 0.0
+    else:
+        sharpe = 0.0
+        
+    # XIRR substitute (CAGR)
+    years = calendar_days / 365.25 if calendar_days > 0 else 1.0
+    xirr = round(((final_equity / INITIAL_BALANCE_THB) ** (1 / years) - 1) * 100, 2)
 
     first_price_thb = daily_log[0]["price_thb"] if daily_log else 0
     if first_price_thb > 0 and last_price_thb > 0:
@@ -467,21 +708,29 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
     print(f"  Period     : {daily_log[0]['date'] if daily_log else '?'}  ->  {daily_log[-1]['date'] if daily_log else '?'}  ({calendar_days}d)")
     print(f"  Candles    : {candles_run} x {interval_used}  |  Trades : {len(closed_trades)}")
     print("")
-    print("  PERFORMANCE")
-    print(f"  {'Return':<14}: {ret_sign}{ret_pct:.2f}%   (B{INITIAL_BALANCE_THB:,.0f} -> B{final_equity:,.2f})")
-    print(f"  {'Total P&L':<14}: {pnl_sign}B{total_pnl:,.2f}   Fees: B{total_fees:,.2f}")
-    print("")
-    print("  TRADE STATS")
-    print(f"  {'Win Rate':<14}: {win_rate:.1f}%   ({len(wins)} wins / {len(losses)} losses)")
-    print(f"  {'Wins':<14}: {win_bar}  avg B{avg_win:+.2f}")
-    print(f"  {'Losses':<14}: {loss_bar}  avg B{avg_loss:.2f}")
-    print(f"  {'R:R Ratio':<14}: {rr_ratio:.2f}")
+    print("  SUMMARY STATS")
+    print(f"  {'Total Closed Trade':<30}: {len(closed_trades):.2f}")
+    print(f"  {'Win Rate (%)':<30}: {win_rate/100:.2f}")
+    print(f"  {'Total Profit (THB)':<30}: {total_pnl:,.2f}")
+    print(f"  {'Unrealized P/L (Open Deals)':<30}: {unrealized:,.2f}")
+    print(f"  {'Average Win (THB)':<30}: {avg_win:,.2f}")
+    avg_loss_str = f"{avg_loss:,.2f}" if avg_loss > 0 else "-"
+    print(f"  {'Average Loss (THB)':<30}: {avg_loss_str}")
+    print(f"  {'Expectancy per Trade (THB)':<30}: {expectancy:,.2f}")
+    print(f"  {'Best Annualized Trade (%)':<30}: {best_ann:.2f}%")
+    print(f"  {'Worst Annualized Trade (%)':<30}: {worst_ann:.2f}%")
+    print(f"  {'Median Annualized Trade (%)':<30}: {median_ann:.2f}%")
+    print(f"  {'Top 10% Annualized Trade':<30}: {top_10_ann:.2f}%")
+    print(f"  {'Bottom 10% Annualized Trade':<30}: {bot_10_ann:.2f}%")
+    print(f"  {'XIRR':<30}: {xirr:.2f}%")
+    print(f"  {'Avg Capital/Year (THB/Year)':<30}: {avg_cap_year:,.2f}")
+    print(f"  {'Sharpe Ratio':<30}: {sharpe:.2f}")
     print("")
     print("  vs BUY-AND-HOLD")
-    print(f"  {'Agent':<14}: {ret_sign}{ret_pct:.2f}%")
-    print(f"  {'Buy & Hold':<14}: {bah_sign}{bah_return_pct:.2f}%")
+    print(f"  {'Agent':<20}: {ret_sign}{ret_pct:.2f}%")
+    print(f"  {'Buy & Hold':<20}: {bah_sign}{bah_return_pct:.2f}%")
     alpha_label = "AGENT WINS" if agent_alpha > 0 else "B&H WINS"
-    print(f"  {'Alpha':<14}: {alp_sign}{agent_alpha:.2f}%  [{alpha_label}]")
+    print(f"  {'Alpha':<20}: {alp_sign}{agent_alpha:.2f}%  [{alpha_label}]")
     print("")
 
     trading_days = [d for d in _window_trades]
@@ -489,19 +738,19 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
     days_total = len(trading_days)
     for day, windows in _window_trades.items():
         is_weekday = datetime.strptime(day, "%Y-%m-%d").weekday() < 5
-        min_required = 6 if is_weekday else 2
+        min_required = 6 if is_weekday else 1
         total_day_trades = sum(windows.values())
         if total_day_trades >= min_required: days_compliant += 1
 
     print("  WINDOW COMPLIANCE")
-    print(f"  {'Min trades/day':<14}: weekday=6 (2x3 windows)  weekend=2 (1 window)")
+    print(f"  {'Min trades/day':<14}: weekday=6 (2x3 windows)  weekend=1 (1 window)")
     if trading_days:
         print(f"  {'Days traded':<14}: {days_total}")
         print(f"  {'Days met quota':<14}: {days_compliant}/{days_total}", end="")
         print(f"  {'[OK]' if days_compliant == days_total else '[BELOW QUOTA]'}")
         for day, windows in sorted(_window_trades.items()):
             is_weekday = datetime.strptime(day, "%Y-%m-%d").weekday() < 5
-            min_required = 6 if is_weekday else 2
+            min_required = 6 if is_weekday else 1
             total = sum(windows.values())
             marker = "[OK]" if total >= min_required else f"[NEED {min_required - total} MORE]"
             win_str = "  ".join(f"{k}:{v}" for k, v in windows.items())
@@ -516,9 +765,30 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
     print("")
     print(f"  Time taken  : {_mins}m {_secs}s")
     print("")
+    summary_file = os.path.join(_DATA_DIR, "backtest_summary.csv")
+    with open(summary_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Metric", "Value"])
+        writer.writerow(["Total Closed Trade", f"{len(closed_trades):.2f}"])
+        writer.writerow(["Win Rate (%)", f"{win_rate/100:.2f}"])
+        writer.writerow(["Total Profit (THB)", f"{total_pnl:.2f}"])
+        writer.writerow(["Unrealized P/L (Open Deals)", f"{unrealized:.2f}"])
+        writer.writerow(["Average Win (THB)", f"{avg_win:.2f}"])
+        writer.writerow(["Average Loss (THB)", f"{avg_loss:.2f}" if avg_loss > 0 else "-"])
+        writer.writerow(["Expectancy per Trade (THB)", f"{expectancy:.2f}"])
+        writer.writerow(["Best Annualized Trade (%)", f"{best_ann:.2f}%"])
+        writer.writerow(["Worst Annualized Trade (%)", f"{worst_ann:.2f}%"])
+        writer.writerow(["Median Annualized Trade (%)", f"{median_ann:.2f}%"])
+        writer.writerow(["Top 10% Annualized Trade", f"{top_10_ann:.2f}%"])
+        writer.writerow(["Bottom 10% Annualized Trade", f"{bot_10_ann:.2f}%"])
+        writer.writerow(["XIRR", f"{xirr:.2f}%"])
+        writer.writerow(["Avg Capital/Year (THB/Year)", f"{avg_cap_year:.2f}"])
+        writer.writerow(["Sharpe Ratio", f"{sharpe:.2f}"])
+
     print("  LOGS SAVED")
     print(f"  Candle log  : data/backtest_log.csv    ({len(daily_log)} rows)")
     print(f"  Trade log   : data/backtest_trades.csv ({len(closed_trades)} trades)")
+    print(f"  Summary     : data/backtest_summary.csv")
     print("=" * 60)
     print("")
 
@@ -568,4 +838,21 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
 
 
 if __name__ == "__main__":
-    run_backtest(config={"use_cache": True})
+    import argparse
+    parser = argparse.ArgumentParser(description="Gold Agent Backtest")
+    parser.add_argument("--start", type=str, help="Start date YYYY-MM-DD (e.g. 2026-01-01)", default=None)
+    parser.add_argument("--end", type=str, help="End date YYYY-MM-DD (e.g. 2026-01-31)", default=None)
+    parser.add_argument("--interval", type=str, help="Timeframe interval (e.g. 1h, 30m, 15m)", default="1h")
+    parser.add_argument("--no-cache", action="store_true", help="Force fresh data fetch")
+    args = parser.parse_args()
+    
+    config = {
+        "use_cache": not args.no_cache,
+        "start_date": args.start,
+        "end_date": args.end,
+        "interval": args.interval,
+        "use_news": False,       # Disable live news during backtest to prevent data leakage
+        "use_daily_bias": False, # Disable live daily bias
+        "use_h1_mtf": False      # Disable live MTF data
+    }
+    run_backtest(config=config)
