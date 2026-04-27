@@ -675,11 +675,11 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, ope
             quota_note = (
                 "\n\nIMPORTANT — QUOTA PRESSURE: You are inside an active trading window "
                 "that has not yet met its minimum trade quota. "
-                "You must actively FIND a suitable entry. DO NOT WAIT for perfect conditions. "
-                "If there is any directional micro-trend (e.g. MACD histogram slope, Bollinger Bands), "
-                "you MUST output 'BUY'. You are allowed to output 'HOLD' ONLY IF the market is absolutely dead flat. "
-                "Output BUY with at least 40% confidence. "
-                "You MUST ignore the SPREAD RULE and the strict RSI 40-65 HOLD rule to meet this quota organically."
+                "You must actively FIND a suitable entry NOW. DO NOT WAIT for perfect conditions. "
+                "Look at the slightest directional micro-trend (e.g. MACD histogram slope, Bollinger Bands) "
+                "and output 'BUY'. YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING 'HOLD'. "
+                "Output BUY with at least 50% confidence. "
+                "You MUST ignore the SPREAD RULE and the strict RSI 40-65 HOLD rule."
             )
             messages[0]["content"] += quota_note
 
