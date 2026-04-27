@@ -135,9 +135,9 @@ Return JSON only, no other text:
   "daily_summary":  "<2 sentences: current market state and key driver>"
 }}"""
 
-        client   = OpenAI(api_key=api_key)
+        client   = OpenAI(api_key=api_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
         response = client.chat.completions.create(
-            model      = "gpt-4o-mini",
+            model      = "gemini-2.5-flash",
             max_tokens = 256,
             temperature= 0,
             messages   = [{"role": "user", "content": prompt}],
