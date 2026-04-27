@@ -64,7 +64,7 @@ try:
     )
 except ImportError:
     TAKE_PROFIT_PCT = 0.015
-    STOP_LOSS_PCT = -0.010
+    STOP_LOSS_PCT = -0.015  # ✅ Wider SL to survive gold volatility
     TRAILING_SL_PCT = 0.007
     COOLDOWN_ROUNDS = 0
     LOSS_COOLDOWN = 1
@@ -427,8 +427,27 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
         _window_trades.setdefault(date_str_today, {})
         _window_used = _window_trades[date_str_today].get(candle_window, 0)
         _is_weekend = _to_thai(date).weekday() >= 5
-        _window_quota = 1 if _is_weekend else 2
+        # Competition rules: 2 trades per window on ALL days
+        _window_quota = 2
         _quota_pressure = _window_used < _window_quota
+
+        def _mock_daily_market():
+            # Realistic trend estimation based on historical window only (NO LEAKAGE)
+            if len(window) < 5: return {"daily_trend": "Sideways", "trend_strength": "Weak"}
+            recent_close = window["Close"].tail(20)
+            change = (recent_close.iloc[-1] - recent_close.iloc[0]) / recent_close.iloc[0]
+            
+            if change > 0.005: trend, strength = "Uptrend", "Strong"
+            elif change > 0.002: trend, strength = "Uptrend", "Moderate"
+            elif change < -0.005: trend, strength = "Downtrend", "Strong"
+            elif change < -0.002: trend, strength = "Downtrend", "Moderate"
+            else: trend, strength = "Sideways", "Weak"
+            
+            return {
+                "daily_trend": trend,
+                "trend_strength": strength,
+                "daily_summary": f"Historical market analysis indicates {trend} bias."
+            }
 
         def _mock_macro():
             d_val = float(window["DXY"].iloc[-1]) if "DXY" in window.columns else 100.0
@@ -438,9 +457,31 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                 "vix": {"value": v_val, "change_pct": 0.0, "signal": "MODERATE"}
             }
 
+        def _mock_news():
+            import json
+            try:
+                with open("data/historical_news_2026_03.json", "r") as f:
+                    news_db = json.load(f)
+                curr_date = date.strftime("%Y-%m-%d")
+                active_news = {"sentiment": "Neutral", "headline": "No major news.", "impact": "Low"}
+                for d_key in sorted(news_db.keys()):
+                    if d_key <= curr_date: active_news = news_db[d_key]
+                    else: break
+                return active_news
+            except:
+                return {"sentiment": "Neutral", "headline": "Stable market conditions.", "impact": "Low"}
+
+        import agent.daily_market_agent as dm_module
+        import news.sentiment as news_module
         with _quiet(), \
              patch.object(fetch_module, "get_gold_price", return_value=window), \
-             patch.object(fetch_module, "get_macro_indicators", side_effect=_mock_macro):
+             patch.object(fetch_module, "get_gold_price_intraday", return_value=window), \
+             patch.object(dm_module, "get_daily_market", side_effect=_mock_daily_market), \
+             patch.object(fetch_module, "get_macro_indicators", side_effect=_mock_macro), \
+             patch.object(news_module, "get_gold_news", side_effect=_mock_news):
+            
+            # Ensure news is enabled in agent config for backtest
+            config['use_news'] = True
             agent = run_agent(quota_pressure=_quota_pressure, open_positions=len(open_positions), config=config)
             
         decision = agent["decision"]
@@ -467,10 +508,22 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
         elif interval_used == "15m": _int_mins = 15
         
         _trades_needed = max(0, _window_quota - _window_used)
-        _failsafe_thresh = _int_mins * max(2, _trades_needed * 2)
+        # Failsafe activates only in the LAST 60 minutes of a window (2 candles at 30m)
+        _failsafe_thresh = _int_mins * 2
         
         _is_invalid_sell = (decision == "SELL" and not open_positions)
         _is_invalid_buy = (decision == "BUY" and len(open_positions) >= 1)
+        # Minimum hold: 90 min UNLESS failsafe is about to trigger (let it close out)
+        _min_hold_minutes = 90
+        _too_early_to_sell = False
+        if decision == "SELL" and open_positions and (_mins_left is None or _mins_left > _failsafe_thresh):
+            entry_dt = open_positions[0].get("entry_dt")
+            if entry_dt is not None:
+                held_minutes = (date - entry_dt).total_seconds() / 60
+                if held_minutes < _min_hold_minutes:
+                    _too_early_to_sell = True
+                    decision = "HOLD"
+                    reasoning = f"[HOLD] Min hold: {held_minutes:.0f}/{_min_hold_minutes}min"
         
         _needs_failsafe = (_window_used < _window_quota or len(open_positions) > 0)
         
@@ -489,11 +542,13 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                 if open_positions:
                     decision = "SELL"
                     confidence = 100
-                    reasoning = "[FAILSAFE] Window closing. Forced SELL to free capital and meet quota."
+                    reasoning = "[FAILSAFE] Forced SELL to exit window."
                 else:
-                    decision = "BUY"
+                    # ✅ Reverted to simple momentum-based failsafe (NO LEAKAGE)
+                    recent_diff = window["Close"].iloc[-1] - window["Close"].iloc[-5] if len(window) >= 5 else 0
+                    decision = "BUY" if recent_diff >= 0 else "SELL"
                     confidence = 51
-                    reasoning = "[FAILSAFE] Window closing. Forced BUY to meet quota."
+                    reasoning = f"[FAILSAFE] Forced {decision} to meet quota based on short-term momentum."
 
         _effective_gate = 40 if _quota_pressure else CONFIDENCE_GATE
         
@@ -511,8 +566,15 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
 
         elif decision == "BUY":
             if balance_thb >= MIN_BALANCE_THB:
-                size_pct = _size_pct_by_confidence(confidence)
-                gross = round(balance_thb * size_pct, 2)
+                # ✅ DYNAMIC SIZING: If forced by failsafe OR low confidence, use 1,000 THB (minimum).
+                # If normal high-confidence trade, use size based on confidence.
+                if "[FAILSAFE]" in reasoning or confidence <= 55:
+                    gross = 1000.0
+                    size_pct = 0.0 # N/A
+                else:
+                    size_pct = _size_pct_by_confidence(confidence)
+                    gross = round(balance_thb * size_pct, 2)
+
                 if gross < 1000:
                     action = "SKIP"
                     continue
@@ -523,6 +585,7 @@ def run_backtest(config: dict | None = None, use_cache: bool = True) -> dict:
                 open_positions.append({
                     "entry_date": _to_thai(date).strftime("%Y-%m-%d %H:%M"),
                     "entry_price": price_thb,
+                    "entry_dt": date,   # raw datetime for min-hold calculation
                     "highest_price": price_thb,
                     "size_bw": size_bw,
                     "cost_thb": gross,
@@ -851,8 +914,8 @@ if __name__ == "__main__":
         "start_date": args.start,
         "end_date": args.end,
         "interval": args.interval,
-        "use_news": False,       # Disable live news during backtest to prevent data leakage
-        "use_daily_bias": False, # Disable live daily bias
-        "use_h1_mtf": False      # Disable live MTF data
+        "use_news": True,        # Now mocked with historical context
+        "use_daily_bias": True,  # Now mocked correctly
+        "use_h1_mtf": True       # Now mocked correctly
     }
     run_backtest(config=config)
