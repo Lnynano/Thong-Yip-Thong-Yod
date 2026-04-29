@@ -486,7 +486,7 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         failsafe_triggered = False
 
         _mins_left = minutes_until_window_end()
-        if (decision == "HOLD" and can_trade_now() and _mins_left is not None and _mins_left <= 10 and not current_window_quota_met()):
+        if (decision == "HOLD" and can_trade_now() and _mins_left is not None and _mins_left <= 90 and not current_window_quota_met()):
             
             failsafe_triggered = True   # ✅ ADD
             
