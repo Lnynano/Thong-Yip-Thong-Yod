@@ -240,3 +240,4 @@ gold-agent/.venv/
 .DS_Store
 Thumbs.db
 .superpowers/
+gold-agent/read_log.py
