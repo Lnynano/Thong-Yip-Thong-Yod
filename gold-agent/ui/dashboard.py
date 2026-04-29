@@ -97,7 +97,7 @@ def get_latest_ui():
 # ─────────────────────────────────────────────────────────────
 _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _UI_STATE_PATH = os.path.join(_BASE_DIR, "data", "ui_state.json")
-_UI_STATE_DEFAULTS = {"trade_mode": False, "refresh_mode": "REAL"}
+_UI_STATE_DEFAULTS = {"trade_mode": os.getenv("DEFAULT_TRADE_MODE", "false").lower() == "true", "refresh_mode": "REAL"}
 
 def _load_ui_state() -> dict:
     try:
@@ -565,7 +565,7 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         elif action == "OPENED": status = f"✅ OPENED position  ·  {trade_result['size_bw']:.5f} bw @ ฿{trade_result['price_thb']:,.0f}"
         elif action == "CLOSED":
             pnl = trade_result.get("pnl_thb", 0)
-            status = f"{'🟢' if pnl >= 0 else '🔴'} CLOSED  ·  P&L {'+' if pnl>=0 else ''}฿{pnl:.2f}  ·  {trade_result['outcome']}"
+            status = f"{'🟢' if pnl >= 0 else '🔴'} CLOSED  ·  P&L {'+' if pnl>=0 else ''}฿{pnl:.2f}  ·  {trade_result.get('trade', {}).get('outcome', 'WIN' if pnl >= 0 else 'LOSS')}"
         elif action == "SKIP": status = f"⏸  {trade_result.get('reason', 'No trade')}  ·  {decision} {confidence}%"
         else: status = f"HOLD  ·  no trade action  ·  fetched {fetch_time}"
 

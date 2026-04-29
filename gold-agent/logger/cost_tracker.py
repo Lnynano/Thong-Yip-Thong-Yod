@@ -28,9 +28,17 @@ load_dotenv()
 
 _THAI_TZ = timezone(timedelta(hours=7))
 
-# ── GPT-4o-mini pricing (USD per token) ──────────────────────
-_INPUT_PRICE_PER_TOKEN  = 0.150 / 1_000_000   # $0.150 / 1M tokens
-_OUTPUT_PRICE_PER_TOKEN = 0.600 / 1_000_000   # $0.600 / 1M tokens
+# ── Multi-Model pricing (USD per token) ──────────────────────
+_PRICING = {
+    "openai": {
+        "input":  0.150 / 1_000_000,
+        "output": 0.600 / 1_000_000
+    },
+    "gemini": {
+        "input":  0.075 / 1_000_000,
+        "output": 0.300 / 1_000_000
+    }
+}
 
 # ── Persistence ──────────────────────────────────────────────
 _COST_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "llm_costs.json")
@@ -89,8 +97,14 @@ def track_usage(usage, source: str = "unknown") -> dict:
     input_tokens  = getattr(usage, "prompt_tokens", 0) or 0
     output_tokens = getattr(usage, "completion_tokens", 0) or 0
 
-    cost_usd = (input_tokens * _INPUT_PRICE_PER_TOKEN +
-                output_tokens * _OUTPUT_PRICE_PER_TOKEN)
+    # Determine pricing model based on caller source
+    if source in ("trading_agent", "daily_market"):
+        rates = _PRICING["gemini"]
+    else:
+        rates = _PRICING["openai"]
+
+    cost_usd = (input_tokens * rates["input"] +
+                output_tokens * rates["output"])
     rate     = _get_usd_thb_rate()
     cost_thb = cost_usd * rate
 
