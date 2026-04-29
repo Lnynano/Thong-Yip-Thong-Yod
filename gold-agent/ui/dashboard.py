@@ -502,7 +502,7 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
 
         from agent.trading_agent import run_agent
         from trader.trade_scheduler import can_trade_now, trades_remaining_today, minutes_until_window_end, current_window_quota_met, record_trade
-        _quota_pressure = can_trade_now() and trades_remaining_today() > 0
+        _quota_pressure = can_trade_now() and not current_window_quota_met()
         agent = run_agent(quota_pressure=_quota_pressure, open_positions=num_open)
         decision = agent.get("decision", "HOLD")
         confidence = agent.get("confidence", 0)
