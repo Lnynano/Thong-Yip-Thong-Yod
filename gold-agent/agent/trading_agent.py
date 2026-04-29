@@ -149,7 +149,9 @@ TOOLS = [
 # ─────────────────────────────────────────────────────────────
 # Tool Executor
 # ─────────────────────────────────────────────────────────────
-def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = None) -> str:
+def _execute_tool(
+    tool_name: str, tool_input: dict, _tool_config: dict | None = None
+) -> str:
     """
     Execute a tool call and return a structured JSON string result.
 
@@ -168,11 +170,15 @@ def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = 
     try:
         import sys
         import os
-        sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+        sys.path.insert(
+            0, os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        )
 
         # ── Tool: get_price ──────────────────────────────────────────────────
         if tool_name == "get_price":
             from data.fetch import get_gold_price, get_hsh_price
+
             df = get_gold_price()
             if df.empty:
                 return json.dumps({"error": "Could not fetch gold price data."})
@@ -184,7 +190,9 @@ def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = 
             current_price = float(df["Close"].iloc[-1])
             price_change_pct = round(
                 (recent["Close"].iloc[-1] - recent["Close"].iloc[0])
-                / recent["Close"].iloc[0] * 100, 2
+                / recent["Close"].iloc[0]
+                * 100,
+                2,
             )
 
             # HSH live price is the authoritative current price (96.5% Thai gold)
@@ -192,92 +200,114 @@ def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = 
             try:
                 hsh = get_hsh_price()
                 if hsh:
-                    result["current_price_source"]   = "HSH_LIVE_96.5pct"
+                    result["current_price_source"] = "HSH_LIVE_96.5pct"
                     result["current_price_thb_sell"] = hsh["sell"]
-                    result["current_price_thb_buy"]  = hsh["buy"]
-                    result["spread_thb"]             = hsh["spread"]
-                    result["note"] = "sell_thb = price you PAY to BUY. buy_thb = price you RECEIVE when SELLING."
+                    result["current_price_thb_buy"] = hsh["buy"]
+                    result["spread_thb"] = hsh["spread"]
+                    result["note"] = (
+                        "sell_thb = price you PAY to BUY. buy_thb = price you RECEIVE when SELLING."
+                    )
                 else:
                     result["current_price_source"] = "yfinance_futures"
-                    result["current_price_usd"]    = round(current_price, 2)
+                    result["current_price_usd"] = round(current_price, 2)
             except Exception:
                 result["current_price_source"] = "yfinance_futures"
-                result["current_price_usd"]    = round(current_price, 2)
+                result["current_price_usd"] = round(current_price, 2)
 
             result["historical_usd_close"] = round(current_price, 2)
-            result["period_days"]          = len(recent)
+            result["period_days"] = len(recent)
             result["ohlcv_summary"] = {
-                "open" : round(float(recent["Open"].iloc[0]), 2),
-                "high" : round(float(recent["High"].max()), 2),
-                "low"  : round(float(recent["Low"].min()), 2),
+                "open": round(float(recent["Open"].iloc[0]), 2),
+                "high": round(float(recent["High"].max()), 2),
+                "low": round(float(recent["Low"].min()), 2),
                 "close": round(float(recent["Close"].iloc[-1]), 2),
                 "avg_volume": int(recent["Volume"].mean()),
             }
             result["price_change_pct"] = price_change_pct
-            result["trend"]            = "UP" if price_change_pct > 0 else "DOWN"
+            result["trend"] = "UP" if price_change_pct > 0 else "DOWN"
 
             return json.dumps(result)
 
         # ── Tool: get_indicators ─────────────────────────────────────────────
         elif tool_name == "get_indicators":
             from data.fetch import get_gold_price
-            from indicators.tech import calculate_rsi, calculate_macd, calculate_bollinger_bands
+            from indicators.tech import (
+                calculate_rsi,
+                calculate_macd,
+                calculate_bollinger_bands,
+            )
+
             df = get_gold_price()
             if df.empty:
                 return json.dumps({"error": "Could not calculate indicators."})
 
-            rsi  = calculate_rsi(df)
+            rsi = calculate_rsi(df)
             macd = calculate_macd(df)
-            bb   = calculate_bollinger_bands(df)
+            bb = calculate_bollinger_bands(df)
 
-            rsi_signal  = "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else "NEUTRAL"
+            rsi_signal = (
+                "OVERBOUGHT" if rsi > 70 else "OVERSOLD" if rsi < 30 else "NEUTRAL"
+            )
             macd_signal = "BULLISH" if macd["histogram"] > 0 else "BEARISH"
 
             # ── BUY/SELL Score (0-5 each) ─────────────────────────────────────
             # Pre-score signals so the agent has quantified hints, reduces hallucination
-            _cfg       = _tool_config or {}
-            use_macd   = _cfg.get("use_macd",        True)
-            use_bb     = _cfg.get("use_bb",           True)
-            use_news   = _cfg.get("use_news",         True)
-            use_dxy_vix= _cfg.get("use_dxy_vix",      True)
-            use_h1_mtf = _cfg.get("use_h1_mtf",       True)
-            use_daily  = _cfg.get("use_daily_bias",   True)
+            _cfg = _tool_config or {}
+            use_macd = _cfg.get("use_macd", True)
+            use_bb = _cfg.get("use_bb", True)
+            use_news = _cfg.get("use_news", True)
+            use_dxy_vix = _cfg.get("use_dxy_vix", True)
+            use_h1_mtf = _cfg.get("use_h1_mtf", True)
+            use_daily = _cfg.get("use_daily_bias", True)
             use_volume = _cfg.get("use_volume_spike", True)
 
-            buy_score  = 0
+            buy_score = 0
             sell_score = 0
 
             # RSI (always on — core signal)
-            if rsi < 30:   buy_score  += 2
-            elif rsi < 40: buy_score  += 1
-            if rsi > 70:   sell_score += 2
-            elif rsi > 65: sell_score += 1
+            if rsi < 30:
+                buy_score += 2
+            elif rsi < 40:
+                buy_score += 1
+            if rsi > 70:
+                sell_score += 2
+            elif rsi > 65:
+                sell_score += 1
 
             # MACD histogram
             if use_macd:
-                if macd["histogram"] > 0:  buy_score  += 1
-                else:                      sell_score += 1
+                if macd["histogram"] > 0:
+                    buy_score += 1
+                else:
+                    sell_score += 1
 
             # Bollinger Bands %B
             if use_bb:
-                if bb["percent_b"] < 0.2:   buy_score  += 1
-                elif bb["percent_b"] > 0.8: sell_score += 1
+                if bb["percent_b"] < 0.2:
+                    buy_score += 1
+                elif bb["percent_b"] > 0.8:
+                    sell_score += 1
 
             # Daily market bias (cached — free, runs once/day)
             daily_bias = "Sideways"
             daily_strength = "Weak"
-            daily_summary  = ""
+            daily_summary = ""
             if use_daily:
                 try:
                     from agent.daily_market_agent import get_daily_market
+
                     dm = get_daily_market()
-                    daily_bias     = dm.get("daily_trend", "Sideways")
+                    daily_bias = dm.get("daily_trend", "Sideways")
                     daily_strength = dm.get("trend_strength", "Weak")
-                    daily_summary  = dm.get("daily_summary", "")
+                    daily_summary = dm.get("daily_summary", "")
                     if daily_bias == "Uptrend":
-                        buy_score  += 1 if daily_strength in ("Strong", "Moderate") else 0
+                        buy_score += (
+                            1 if daily_strength in ("Strong", "Moderate") else 0
+                        )
                     elif daily_bias == "Downtrend":
-                        sell_score += 1 if daily_strength in ("Strong", "Moderate") else 0
+                        sell_score += (
+                            1 if daily_strength in ("Strong", "Moderate") else 0
+                        )
                 except Exception:
                     pass
 
@@ -285,6 +315,7 @@ def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = 
             if use_news:
                 try:
                     from news.sentiment import get_gold_news, get_sentiment_strength
+
                     _headlines = get_gold_news(5)
                     news_str = get_sentiment_strength(_headlines)
                     if news_str["sentiment"] == "BULLISH":
@@ -315,31 +346,34 @@ def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = 
             if use_dxy_vix:
                 try:
                     from data.fetch import get_macro_indicators
+
                     macro = get_macro_indicators()
                     dxy = macro.get("dxy", {})
                     if dxy:
                         if dxy["signal"] == "BEARISH_GOLD":
                             sell_score += 1
                         elif dxy["signal"] == "BULLISH_GOLD":
-                            buy_score  += 1
+                            buy_score += 1
                         dxy_context = {
-                            "value"     : dxy["value"],
+                            "value": dxy["value"],
                             "change_pct": dxy["change_pct"],
-                            "signal"    : dxy["signal"],
-                            "note"      : "DXY up = gold headwind. DXY down = gold tailwind.",
+                            "signal": dxy["signal"],
+                            "note": "DXY up = gold headwind. DXY down = gold tailwind.",
                         }
                     vix = macro.get("vix", {})
                     if vix:
                         if "BULLISH_GOLD" in vix["signal"]:
                             buy_score += 1
                         vix_context = {
-                            "value"     : vix["value"],
+                            "value": vix["value"],
                             "change_pct": vix["change_pct"],
-                            "signal"    : vix["signal"],
-                            "note"      : "VIX>20=fear rising=gold safe-haven demand. VIX<15=risk-on=gold neutral.",
+                            "signal": vix["signal"],
+                            "note": "VIX>20=fear rising=gold safe-haven demand. VIX<15=risk-on=gold neutral.",
                         }
                 except Exception as e:
-                    print(f"[trading_agent.py] DXY/VIX fetch failed (non-critical): {e}")
+                    print(
+                        f"[trading_agent.py] DXY/VIX fetch failed (non-critical): {e}"
+                    )
 
             # Multi-timeframe: H1 context + confirmation filter
             h1_context = {}
@@ -347,65 +381,78 @@ def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = 
             if use_h1_mtf:
                 try:
                     from data.fetch import get_gold_price_intraday
+
                     df_h1 = get_gold_price_intraday(interval="1h", days=5)
                     if not df_h1.empty and len(df_h1) >= 15:
-                        h1_rsi  = calculate_rsi(df_h1, period=14)
+                        h1_rsi = calculate_rsi(df_h1, period=14)
                         h1_macd = calculate_macd(df_h1)
                         h1_trend = "BULLISH" if h1_macd["histogram"] > 0 else "BEARISH"
-                        h1_rsi_sig = ("OVERBOUGHT" if h1_rsi > 70
-                                      else "OVERSOLD" if h1_rsi < 30
-                                      else "NEUTRAL")
+                        h1_rsi_sig = (
+                            "OVERBOUGHT"
+                            if h1_rsi > 70
+                            else "OVERSOLD" if h1_rsi < 30 else "NEUTRAL"
+                        )
                         if buy_score > sell_score and h1_rsi > 65:
                             mtf_confirmed = False
                         elif sell_score > buy_score and h1_rsi < 35:
                             mtf_confirmed = False
                         h1_context = {
-                            "interval": "H1", "bars": len(df_h1),
-                            "rsi": round(h1_rsi, 2), "rsi_signal": h1_rsi_sig,
-                            "macd_histogram": h1_macd["histogram"], "trend": h1_trend,
+                            "interval": "H1",
+                            "bars": len(df_h1),
+                            "rsi": round(h1_rsi, 2),
+                            "rsi_signal": h1_rsi_sig,
+                            "macd_histogram": h1_macd["histogram"],
+                            "trend": h1_trend,
                             "mtf_confirmed": mtf_confirmed,
-                            "note": ("H1 CONFIRMS D1 signal" if mtf_confirmed
-                                     else "H1 CONFLICTS with D1 - reduce conviction"),
+                            "note": (
+                                "H1 CONFIRMS D1 signal"
+                                if mtf_confirmed
+                                else "H1 CONFLICTS with D1 - reduce conviction"
+                            ),
                         }
                 except Exception as e:
                     print(f"[trading_agent.py] H1 MTF fetch failed (non-critical): {e}")
 
             # Cap scores to 0-5 range before comparison
-            buy_score  = min(buy_score, 5)
+            buy_score = min(buy_score, 5)
             sell_score = min(sell_score, 5)
 
             result = {
                 "note": "All values are pre-computed deterministically. Do NOT recalculate.",
                 "timeframe": "D1 (primary)",
                 "pre_scored_signals": {
-                    "buy_score":       f"{buy_score} / 5",
-                    "sell_score":      f"{sell_score} / 5",
-                    "bias":            "BUY" if buy_score > sell_score else "SELL" if sell_score > buy_score else "NEUTRAL",
-                    "daily_trend":     daily_bias,
-                    "trend_strength":  daily_strength,
+                    "buy_score": f"{buy_score} / 5",
+                    "sell_score": f"{sell_score} / 5",
+                    "bias": (
+                        "BUY"
+                        if buy_score > sell_score
+                        else "SELL" if sell_score > buy_score else "NEUTRAL"
+                    ),
+                    "daily_trend": daily_bias,
+                    "trend_strength": daily_strength,
                     "note": "Scores are hints only — use your judgment. Pre-scored news sentiment uses keyword lexicon; use get_news for deep LLM evaluation.",
                 },
                 "rsi": {
-                    "value"  : rsi,
-                    "signal" : rsi_signal,
-                    "period" : 14,
+                    "value": rsi,
+                    "signal": rsi_signal,
+                    "period": 14,
                     "interpretation": f"RSI={rsi:.1f} ({rsi_signal})",
                 },
                 "macd": {
-                    "macd_line" : macd["macd"],
+                    "macd_line": macd["macd"],
                     "signal_line": macd["signal"],
-                    "histogram" : macd["histogram"],
-                    "trend"     : macd_signal,
-                    "params"    : "EMA12 - EMA26, Signal=EMA9",
+                    "histogram": macd["histogram"],
+                    "trend": macd_signal,
+                    "params": "EMA12 - EMA26, Signal=EMA9",
                     "interpretation": f"Histogram={macd['histogram']:.4f} ({macd_signal})",
                 },
                 "bollinger_bands": {
-                    "upper"     : bb["upper"],
-                    "middle"    : bb["middle"],
-                    "lower"     : bb["lower"],
-                    "percent_b" : bb["percent_b"],
-                    "bandwidth" : bb["bandwidth"],
-                    "signal"    : bb["signal"],
+                    "upper": bb["upper"],
+                    "middle": bb["middle"],
+                    "lower": bb["lower"],
+                    "percent_b": bb["percent_b"],
+                    "bandwidth": bb["bandwidth"],
+                    "signal": bb["signal"],
                     "interpretation": f"%B={bb['percent_b']:.2f} ({bb['signal']})",
                 },
             }
@@ -428,14 +475,20 @@ def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = 
             _cfg = _tool_config or {}
             use_news = _cfg.get("use_news", True)
             if not use_news:
-                return json.dumps({
-                    "note": "News disabled during backtest to prevent data leakage.",
-                    "headlines": [],
-                    "overall_sentiment": {"sentiment": "NEUTRAL", "strength": "WEAK"}
-                })
-                
+                return json.dumps(
+                    {
+                        "note": "News disabled during backtest to prevent data leakage.",
+                        "headlines": [],
+                        "overall_sentiment": {
+                            "sentiment": "NEUTRAL",
+                            "strength": "WEAK",
+                        },
+                    }
+                )
+
             from news.sentiment import get_gold_news, get_sentiment_summary
             from knowledge.lightrag_store import insert_headlines, query_gold_context
+
             count = min(int(tool_input.get("count", 5)), 5)
             headlines = get_gold_news(count)
             sentiment = get_sentiment_summary(headlines)
@@ -454,8 +507,18 @@ def _execute_tool(tool_name: str, tool_input: dict, _tool_config: dict | None = 
                 "headlines": headlines,
                 "count": len(headlines),
                 "overall_sentiment": sentiment,
-                "bullish_catalysts": ["Fed rate cuts", "Geopolitical tensions", "Inflation surge", "USD weakness"],
-                "bearish_catalysts": ["Fed rate hikes", "Strong USD", "Risk-on rally", "Crypto competition"],
+                "bullish_catalysts": [
+                    "Fed rate cuts",
+                    "Geopolitical tensions",
+                    "Inflation surge",
+                    "USD weakness",
+                ],
+                "bearish_catalysts": [
+                    "Fed rate hikes",
+                    "Strong USD",
+                    "Risk-on rally",
+                    "Crypto competition",
+                ],
             }
             if historical and historical.strip():
                 result["historical_context"] = historical
@@ -513,11 +576,11 @@ def _validate_decision(decision: dict) -> dict:
         reasoning = "No reasoning provided."
 
     return {
-        "decision"   : raw_decision,
-        "confidence" : confidence,
-        "reasoning"  : reasoning,
+        "decision": raw_decision,
+        "confidence": confidence,
+        "reasoning": reasoning,
         "key_factors": list(decision.get("key_factors", [])),
-        "risk_note"  : str(decision.get("risk_note", "")),
+        "risk_note": str(decision.get("risk_note", "")),
     }
 
 
@@ -559,7 +622,8 @@ def _parse_json_with_retry(text: str, attempt: int = 1) -> dict | None:
         # Retry: strip trailing commas before } or ] (common LLM mistake)
         try:
             import re
-            cleaned = re.sub(r',\s*([}\]])', r'\1', json_str)
+
+            cleaned = re.sub(r",\s*([}\]])", r"\1", json_str)
             return json.loads(cleaned)
         except Exception:
             return None
@@ -568,7 +632,12 @@ def _parse_json_with_retry(text: str, attempt: int = 1) -> dict | None:
 # ─────────────────────────────────────────────────────────────
 # Main Agent Function  (ReAct loop)
 # ─────────────────────────────────────────────────────────────
-def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, open_positions: int = 0, config: dict | None = None) -> dict:
+def run_agent(
+    quota_pressure: bool = False,
+    failsafe_pressure: bool = False,
+    open_positions: int = 0,
+    config: dict | None = None,
+) -> dict:
     """
     Run the gold trading ReAct agent.
 
@@ -594,17 +663,17 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, ope
         }
     """
     default_result = {
-        "decision"    : "HOLD",
-        "confidence"  : 0,
-        "reasoning"   : "Analysis unavailable — API error or missing key.",
-        "key_factors" : [],
-        "risk_note"   : "",
+        "decision": "HOLD",
+        "confidence": 0,
+        "reasoning": "Analysis unavailable — API error or missing key.",
+        "key_factors": [],
+        "risk_note": "",
         "raw_response": "",
-        "agent_trace" : [],
+        "agent_trace": [],
     }
 
     # ── Choose your model here (uncomment the one you want to use) ──
-    #ACTIVE_MODEL = "openai"
+    # ACTIVE_MODEL = "openai"
     ACTIVE_MODEL = "gemini"
 
     if ACTIVE_MODEL == "openai":
@@ -612,8 +681,13 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, ope
         client = OpenAI(api_key=api_key)
         model_name = "gpt-4o-mini"
     else:
-        api_key = os.getenv("OPENAI_API_KEY", "").strip()  # Gemini key stored as OPENAI_API_KEY in .env
-        client = OpenAI(api_key=api_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
+        api_key = os.getenv(
+            "GEMINI_API_KEY", ""
+        ).strip()  # Gemini key stored as OPENAI_API_KEY in .env
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
         model_name = "gemini-2.5-flash-lite"
 
     if not api_key or api_key == "your_key_here":
@@ -644,7 +718,7 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, ope
                 ),
             },
         ]
-        
+
         state_note = (
             f"\n\n## YOUR PORTFOLIO STATE\n"
             f"Currently holding: {open_positions} / 1 positions.\n"
@@ -653,7 +727,7 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, ope
             state_note += "CRITICAL: You are FULL. You CANNOT output 'BUY'. You must output 'SELL' or 'HOLD'.\n"
         else:
             state_note += "CRITICAL: You are EMPTY. You CANNOT output 'SELL'. You must output 'BUY' or 'HOLD'.\n"
-            
+
         messages[0]["content"] += state_note
 
         if quota_pressure and open_positions == 0:
@@ -701,6 +775,7 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, ope
             # Track LLM cost
             try:
                 from logger.cost_tracker import track_usage
+
                 track_usage(response.usage, source="trading_agent")
             except Exception:
                 pass
@@ -735,15 +810,19 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, ope
             # ── Tool use: execute and feed back ──────────────
             elif finish_reason == "tool_calls":
                 for tool_call in msg.tool_calls:
-                    tool_name  = tool_call.function.name
+                    tool_name = tool_call.function.name
                     tool_input = json.loads(tool_call.function.arguments)
-                    tool_id    = tool_call.id
+                    tool_id = tool_call.id
 
-                    print(f"[trading_agent.py] TOOL CALL: {tool_name} | input={tool_input}")
+                    print(
+                        f"[trading_agent.py] TOOL CALL: {tool_name} | input={tool_input}"
+                    )
 
                     # ReAct: aₖ → environment → oₖ
                     result = _execute_tool(tool_name, tool_input, _tool_config=config)
-                    result_preview = result[:150] + "..." if len(result) > 150 else result
+                    result_preview = (
+                        result[:150] + "..." if len(result) > 150 else result
+                    )
                     print(f"[trading_agent.py] OBSERVATION: {result_preview}")
 
                     # Log to ReAct trace
@@ -753,11 +832,13 @@ def run_agent(quota_pressure: bool = False, failsafe_pressure: bool = False, ope
                     )
 
                     # Feed tool result back into context
-                    messages.append({
-                        "role"        : "tool",
-                        "tool_call_id": tool_id,
-                        "content"     : result,
-                    })
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_id,
+                            "content": result,
+                        }
+                    )
 
             else:
                 print(f"[trading_agent.py] Unexpected finish_reason: {finish_reason}")
