@@ -179,6 +179,7 @@ hr { border-color: #1e1e1e !important; }
 # Charts & HTML Builders
 # ─────────────────────────────────────────────────────────────
 def _build_price_chart(df) -> plt.Figure:
+    plt.close('all')
     plot_df = df.copy()
     if hasattr(plot_df.index, "tz") and plot_df.index.tz is not None:
         plot_df.index = plot_df.index.tz_localize(None)
@@ -202,6 +203,7 @@ def _build_price_chart(df) -> plt.Figure:
     return fig
 
 def _build_rsi_chart(df) -> plt.Figure:
+    plt.close('all')
     plot_df = df.copy()
     if hasattr(plot_df.index, "tz") and plot_df.index.tz is not None:
         plot_df.index = plot_df.index.tz_localize(None)
@@ -229,6 +231,7 @@ def _build_rsi_chart(df) -> plt.Figure:
     return fig
 
 def _build_equity_chart(equity_history: list) -> plt.Figure:
+    plt.close('all')
     fig, ax = plt.subplots(figsize=(12, 3), facecolor="#0b0b0b")
     ax.set_facecolor("#0b0b0b")
     for spine in ax.spines.values(): spine.set_color("#1e1e1e")
@@ -307,9 +310,27 @@ def _price_html(price_thb, price_usd, change_thb, fetch_time, rate, rate_src) ->
 </div>"""
 
 def _trade_mode_html(trade_mode: bool) -> str:
+    from trader.trade_scheduler import current_window_quota_met, _current_window, _load_state
+    window = _current_window()
+    quota_met = current_window_quota_met()
+    used = 0
+    min_needed = 2
+    
+    if window:
+        state = _load_state()
+        used = state.get("windows", {}).get(window["name"], 0)
+        min_needed = window["min_trades"]
+        
+    if not window:
+        quota_text = f"<span style='color:#555555; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ ⏸ OUTSIDE TRADING WINDOW ]</span>"
+    elif quota_met:
+        quota_text = f"<span style='color:#c9f002; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ ✅ QUOTA MET : {used}/{min_needed} TRADES ]</span>"
+    else:
+        quota_text = f"<span style='color:#ff9900; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ ⚠️ QUOTA NOT MET : {used}/{min_needed} TRADES ]</span>"
+
     if trade_mode:
-        return '<div style="font-family:Courier New,monospace; padding:10px 24px; background:#0d1a00; border:1px solid #2a4400; border-radius:6px; display:flex; align-items:center; gap:12px;"><span style="color:#c9f002; font-size:1.1em; font-weight:900; letter-spacing:0.15em;">● TRADE MODE : ON</span><span style="color:#555; font-size:0.78em;">Paper trades will execute automatically on BUY / SELL signals ≥ 65% confidence</span></div>'
-    return '<div style="font-family:Courier New,monospace; padding:10px 24px; background:#111; border:1px solid #222; border-radius:6px; display:flex; align-items:center; gap:12px;"><span style="color:#555; font-size:1.1em; font-weight:900; letter-spacing:0.15em;">○ TRADE MODE : OFF</span><span style="color:#444; font-size:0.78em;">Analysis running — no trades will be placed</span></div>'
+        return f'<div style="font-family:Courier New,monospace; padding:10px 24px; background:#0d1a00; border:1px solid #2a4400; border-radius:6px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;"><span style="color:#c9f002; font-size:1.1em; font-weight:900; letter-spacing:0.15em;">● TRADE MODE : ON</span><span style="color:#555; font-size:0.78em;">Paper trades will execute automatically on BUY / SELL signals ≥ 65% confidence</span> {quota_text}</div>'
+    return f'<div style="font-family:Courier New,monospace; padding:10px 24px; background:#111; border:1px solid #222; border-radius:6px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;"><span style="color:#555; font-size:1.1em; font-weight:900; letter-spacing:0.15em;">○ TRADE MODE : OFF</span><span style="color:#444; font-size:0.78em;">Analysis running — no trades will be placed</span> {quota_text}</div>'
 
 def _decision_html(decision, confidence, reasoning, trade_mode=False, key_factors=None, risk_note="", confluence=5.0, regime="RANGING", bb_lower=0.0, bb_upper=0.0, current_price_thb=0.0) -> str:
     cfg = {"BUY": ("#c9f002", "📈"), "SELL": ("#cc3333", "📉"), "HOLD": ("#555555", "⏸")}
@@ -475,10 +496,14 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
             rate_src = thb["rate_source"]
         change = thb_now - thb_prev
 
+        from trader.paper_engine import _load
+        p_state = _load()
+        num_open = len(p_state.get("open_positions", []))
+
         from agent.trading_agent import run_agent
         from trader.trade_scheduler import can_trade_now, trades_remaining_today, minutes_until_window_end, current_window_quota_met, record_trade
         _quota_pressure = can_trade_now() and trades_remaining_today() > 0
-        agent = run_agent(quota_pressure=_quota_pressure)
+        agent = run_agent(quota_pressure=_quota_pressure, open_positions=num_open)
         decision = agent.get("decision", "HOLD")
         confidence = agent.get("confidence", 0)
         reasoning = agent.get("reasoning", "No reasoning.")
@@ -490,12 +515,20 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
             
             failsafe_triggered = True   # ✅ ADD
             
-            agent = run_agent(quota_pressure=True, failsafe_pressure=True)
+            agent = run_agent(quota_pressure=True, failsafe_pressure=True, open_positions=num_open)
             decision = agent.get("decision", "HOLD")
             confidence = agent.get("confidence", 0)
             reasoning = agent.get("reasoning", "No reasoning.")
+            
             if decision == "HOLD":
-                decision, confidence, reasoning = "BUY", 51, "[FAILSAFE] Window closing, quota not met. Forced BUY signal."
+                from trader.paper_engine import _load
+                p_state = _load()
+                has_positions = len(p_state.get("open_positions", [])) > 0
+                
+                if has_positions:
+                    decision, confidence, reasoning = "SELL", 65, "[FAILSAFE] Window closing, quota not met. Forced SELL signal."
+                else:
+                    decision, confidence, reasoning = "BUY", 65, "[FAILSAFE] Window closing, quota not met. Forced BUY signal."
 
         if decision in ("BUY", "SELL") and can_trade_now(): record_trade()
 

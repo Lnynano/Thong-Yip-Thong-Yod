@@ -730,16 +730,27 @@ def run_agent(
 
         messages[0]["content"] += state_note
 
-        if quota_pressure and open_positions == 0:
-            quota_note = (
-                "\n\nIMPORTANT — QUOTA PRESSURE: You are inside an active trading window "
-                "that has not yet met its minimum trade quota. "
-                "You must actively FIND a suitable entry NOW. DO NOT WAIT for perfect conditions. "
-                "Look at the slightest directional micro-trend (e.g. MACD histogram slope, Bollinger Bands) "
-                "and output 'BUY'. YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING 'HOLD'. "
-                "Output BUY with at least 50% confidence. "
-                "You MUST ignore the SPREAD RULE and the strict RSI 40-65 HOLD rule."
-            )
+        if quota_pressure:
+            if open_positions == 0:
+                quota_note = (
+                    "\n\nIMPORTANT — QUOTA PRESSURE: You are inside an active trading window "
+                    "that has not yet met its minimum trade quota. "
+                    "You must actively FIND a suitable entry NOW. DO NOT WAIT for perfect conditions. "
+                    "Look at the slightest directional micro-trend (e.g. MACD histogram slope, Bollinger Bands) "
+                    "and output 'BUY'. YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING 'HOLD'. "
+                    "Output BUY with at least 50% confidence. "
+                    "You MUST ignore the SPREAD RULE and the strict RSI 40-65 HOLD rule."
+                )
+            else:
+                quota_note = (
+                    "\n\nIMPORTANT — QUOTA PRESSURE: You are inside an active trading window "
+                    "that has not yet met its minimum trade quota. "
+                    "You are currently holding assets. You must actively FIND a suitable exit NOW. "
+                    "DO NOT WAIT for maximum profits. "
+                    "Output 'SELL'. YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING 'HOLD'. "
+                    "Output SELL with at least 50% confidence. "
+                    "You MUST ignore standard conservative risk filters."
+                )
             messages[0]["content"] += quota_note
 
         if failsafe_pressure:
@@ -848,6 +859,7 @@ def run_agent(
         # ── Max iterations hit (infinite loop guard) ──────────────
         print("[trading_agent.py] Max iterations reached without final answer.")
         agent_trace.append("[FALLBACK] Max iterations reached → HOLD")
+        default_result["reasoning"] = "Max iterations reached without final answer. (AI fallback HOLD)"
         default_result["agent_trace"] = agent_trace
         return default_result
 
