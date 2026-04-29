@@ -42,7 +42,21 @@ def send_signal(
 
     emoji    = _EMOJI.get(decision, "⏸")
     color    = _COLORS.get(decision, 0xaaaaaa)
-    tag      = "**PLACE ORDER NOW**" if will_trade else ""
+    tag = ""
+    if will_trade:
+        if decision == "BUY":
+            if confidence >= 85:
+                tag = "**PLACE ORDER NOW (ใช้เงิน 100% ของพอร์ต)**"
+            elif confidence >= 75:
+                tag = "**PLACE ORDER NOW (ใช้เงิน 95% ของพอร์ต)**"
+            else:
+                tag = "**PLACE ORDER NOW (ใช้เงิน 90% ของพอร์ต)**"
+        elif decision == "SELL":
+            tag = "**PLACE ORDER NOW (ขายออกทั้งหมด)**"
+    else:
+        if decision in ("BUY", "SELL"):
+            tag = "*[⚠️ NO ACTION]* ความมั่นใจไม่ถึงเกณฑ์ 65% (แนะนำให้รอดูสถานการณ์)"
+            
     short_reason = reasoning[:200] + "..." if len(reasoning) > 200 else reasoning
 
     mention  = "@everyone " if will_trade else ""
