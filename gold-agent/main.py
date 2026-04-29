@@ -206,6 +206,11 @@ def main():
     import gradio as gr
 
     verify_environment()
+    try:
+        from trader.paper_engine import _load
+        _load()
+    except Exception:
+        pass
     run_cli_test()
 
     # ── Start background trade loop ────────────────────────────────────────
