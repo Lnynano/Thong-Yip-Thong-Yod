@@ -20,6 +20,8 @@ import matplotlib.dates as mdates
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from trader.trade_scheduler import current_window_quota_met, _current_window, _load_state, can_trade_now, trades_remaining_today, minutes_until_window_end, record_trade
+
 DEV_MODE: bool = os.getenv("DEV_MODE", "false").lower() == "true"
 
 _INTERVALS = {"REAL": 900, "TEST": 15}
@@ -508,7 +510,6 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         num_open = len(p_state.get("open_positions", []))
 
         from agent.trading_agent import run_agent
-        from trader.trade_scheduler import can_trade_now, trades_remaining_today, minutes_until_window_end, current_window_quota_met, record_trade, _current_window
         
         # Reset manual quota if window has changed
         state = _load_ui_state()
