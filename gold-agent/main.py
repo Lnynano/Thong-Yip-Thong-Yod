@@ -213,14 +213,14 @@ def main():
         pass
     run_cli_test()
 
-    # ── Start background trade loop ────────────────────────────────────────
-    scheduler_thread = threading.Thread(
-        target=_background_trade_loop,
-        name="trade-scheduler",
-        daemon=True,   # dies automatically when main process exits
-    )
-    scheduler_thread.start()
-    print(f"[main.py] Background scheduler started (thread: {scheduler_thread.name})")
+    # ── Background loop disabled here (handled by dashboard.py scheduler) ──
+    # scheduler_thread = threading.Thread(
+    #     target=_background_trade_loop,
+    #     name="trade-scheduler",
+    #     daemon=True,
+    # )
+    # scheduler_thread.start()
+    print("[main.py] Background scheduler (Thread) disabled in favor of Dashboard Scheduler")
 
     # ── Launch Gradio dashboard ────────────────────────────────────────────
     try:
