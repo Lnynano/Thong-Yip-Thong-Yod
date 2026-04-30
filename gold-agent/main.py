@@ -221,6 +221,8 @@ def main():
     # )
     # scheduler_thread.start()
     print("[main.py] Background scheduler (Thread) disabled in favor of Dashboard Scheduler")
+    from ui.dashboard import start_scheduler
+    start_scheduler()
 
     # ── Launch Gradio dashboard ────────────────────────────────────────────
     try:
