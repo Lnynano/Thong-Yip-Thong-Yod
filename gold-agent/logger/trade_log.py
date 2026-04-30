@@ -56,7 +56,7 @@ def log_analysis(decision: str, confidence: int, price_usd: str,
                  price_thb: str, rsi: str, macd: str,
                  sharpe: str, reasoning: str) -> None:
     """Append one analysis result to MongoDB or CSV fallback."""
-    timestamp = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M")
+    timestamp = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
     short_reason = reasoning[:500] + "..." if len(reasoning) > 500 else reasoning
 
     # ── MongoDB ──────────────────────────────────────────────
