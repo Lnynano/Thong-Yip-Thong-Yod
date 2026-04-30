@@ -97,7 +97,12 @@ def get_latest_ui():
 # ─────────────────────────────────────────────────────────────
 _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _UI_STATE_PATH = os.path.join(_BASE_DIR, "data", "ui_state.json")
-_UI_STATE_DEFAULTS = {"trade_mode": os.getenv("DEFAULT_TRADE_MODE", "false").lower() == "true", "refresh_mode": "REAL"}
+_UI_STATE_DEFAULTS = {
+    "trade_mode": os.getenv("DEFAULT_TRADE_MODE", "false").lower() == "true", 
+    "refresh_mode": "REAL",
+    "manual_quota_met": False,
+    "last_window_name": ""
+}
 
 def _load_ui_state() -> dict:
     try:
@@ -501,8 +506,17 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         num_open = len(p_state.get("open_positions", []))
 
         from agent.trading_agent import run_agent
-        from trader.trade_scheduler import can_trade_now, trades_remaining_today, minutes_until_window_end, current_window_quota_met, record_trade
-        _quota_pressure = can_trade_now() and not current_window_quota_met()
+        from trader.trade_scheduler import can_trade_now, trades_remaining_today, minutes_until_window_end, current_window_quota_met, record_trade, _current_window
+        
+        # Reset manual quota if window has changed
+        state = _load_ui_state()
+        window = _current_window()
+        win_name = window["name"] if window else "none"
+        if state.get("last_window_name") != win_name:
+            _save_ui_state(manual_quota_met=False, last_window_name=win_name)
+            state = _load_ui_state() # reload
+
+        _quota_pressure = can_trade_now() and not current_window_quota_met() and not state.get("manual_quota_met", False)
         agent = run_agent(quota_pressure=_quota_pressure, open_positions=num_open)
         decision = agent.get("decision", "HOLD")
         confidence = agent.get("confidence", 0)
@@ -511,7 +525,8 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         failsafe_triggered = False
 
         _mins_left = minutes_until_window_end()
-        if (decision == "HOLD" and can_trade_now() and _mins_left is not None and _mins_left <= 90 and not current_window_quota_met()):
+        if (decision == "HOLD" and can_trade_now() and _mins_left is not None and _mins_left <= 90 
+            and not current_window_quota_met() and not state.get("manual_quota_met", False)):
             
             failsafe_triggered = True   # ✅ ADD
             
@@ -632,6 +647,7 @@ def build_ui() -> gr.Blocks:
 
         with gr.Row(visible=DEV_MODE):
             trade_mode_toggle = gr.Checkbox(label="TRADE MODE  —  enable to execute paper trades automatically", value=_init_trade_mode, scale=3)
+            manual_quota_toggle = gr.Checkbox(label="QUOTA MANUALLY MET  —  check to stop pressure/failsafe for this window", value=_saved.get("manual_quota_met", False), scale=3)
             gr.HTML('<div style="font-family:Courier New,monospace; color:#444; font-size:0.75em; padding:12px 0; line-height:1.5em;">OFF = analysis only &nbsp;|&nbsp; ON = trades execute on BUY/SELL ≥ 65% conf</div>')
 
         with gr.Row(visible=DEV_MODE):
@@ -713,14 +729,13 @@ def build_ui() -> gr.Blocks:
 
         mode_radio.change(fn=_set_mode, inputs=[mode_radio], outputs=[])
 
-        def _on_trade_mode_change(enabled: bool):
-            _save_ui_state(trade_mode=enabled)
-            update_and_cache_analysis(enabled)
-            if _set_interval_callback:
-                _set_interval_callback(_INTERVALS.get(_current_mode, 1800))
+        def _on_manual_quota_change(enabled: bool):
+            _save_ui_state(manual_quota_met=enabled)
+            update_and_cache_analysis(_load_ui_state().get("trade_mode", False))
             return _cached_outputs
 
         trade_mode_toggle.change(fn=_on_trade_mode_change, inputs=[trade_mode_toggle], outputs=outputs)
+        manual_quota_toggle.change(fn=_on_manual_quota_change, inputs=[manual_quota_toggle], outputs=outputs)
 
         def _reset():
             from trader.paper_engine import reset_portfolio, get_portfolio_summary, get_trade_history, get_equity_history, get_recent_outcomes
