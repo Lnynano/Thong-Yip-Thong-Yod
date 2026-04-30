@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 DEV_MODE: bool = os.getenv("DEV_MODE", "false").lower() == "true"
 
-_INTERVALS = {"REAL": 1800, "TEST": 15}
+_INTERVALS = {"REAL": 900, "TEST": 15}
 _current_mode: str = "REAL"
 _last_refresh_time: float = time.time()
 
@@ -48,7 +48,7 @@ def _run_scheduled_analysis():
 
 def _update_scheduler_interval():
     """Updates the background job interval when switching REAL/TEST."""
-    interval = _INTERVALS.get(_current_mode, 1800)
+    interval = _INTERVALS.get(_current_mode, 900)
     if scheduler.get_job(_scheduler_job_id):
         scheduler.reschedule_job(_scheduler_job_id, trigger='interval', seconds=interval)
     else:
@@ -645,22 +645,20 @@ def build_ui() -> gr.Blocks:
     with gr.Blocks(title="Thong Yip Thong Yod") as demo:
         gr.HTML("""<div style="font-family:'Courier New',monospace; padding:14px 24px; background:#0f0f0f; border-bottom:1px solid #1e1e1e; display:flex; justify-content:space-between; align-items:center;"><span style="color:#888; font-size:1.1em; font-weight:700; letter-spacing:0.2em;"> Thong Yip Thong Yod</span><span style="color:#555; font-size:0.75em; letter-spacing:0.1em;">XAUUSD &nbsp;·&nbsp; PAPER TRADING &nbsp;·&nbsp; <span style="color:#c9f002;">● LIVE</span></span></div>""")
 
-        with gr.Row(visible=DEV_MODE):
-            trade_mode_toggle = gr.Checkbox(label="TRADE MODE  —  enable to execute paper trades automatically", value=_init_trade_mode, scale=3)
-            manual_quota_toggle = gr.Checkbox(label="QUOTA MANUALLY MET  —  check to stop pressure/failsafe for this window", value=_saved.get("manual_quota_met", False), scale=3)
-            gr.HTML('<div style="font-family:Courier New,monospace; color:#444; font-size:0.75em; padding:12px 0; line-height:1.5em;">OFF = analysis only &nbsp;|&nbsp; ON = trades execute on BUY/SELL ≥ 65% conf</div>')
+        with gr.Row():
+            trade_mode_toggle = gr.Checkbox(label="AUTO TRADE MODE", value=_init_trade_mode, scale=1)
+            manual_quota_toggle = gr.Checkbox(label="QUOTA MANUALLY MET (Stop Pressure)", value=_saved.get("manual_quota_met", False), scale=1)
+            refresh_btn = gr.Button("🔄 REFRESH NOW", variant="primary", scale=2)
+            
+        gr.HTML('<div style="font-family:Courier New,monospace; color:#666; font-size:0.75em; margin-bottom:15px;">AUTO MODE: Trades on ≥ 65% conf | QUOTA OVERRIDE: Stop panic/failsafe trades for this window</div>')
 
         with gr.Row(visible=DEV_MODE):
-            mode_radio = gr.Radio(choices=["REAL", "TEST"], value=_init_refresh_mode, label="REFRESH MODE  —  REAL = every 30 min  ·  TEST = every 15 sec", interactive=True, scale=3)
+            mode_radio = gr.Radio(choices=["REAL", "TEST"], value=_init_refresh_mode, label="REFRESH MODE  —  REAL = every 15 min  ·  TEST = every 15 sec", interactive=True, scale=3)
             gr.HTML('<div style="font-family:Courier New,monospace; color:#444; font-size:0.75em; padding:12px 0; line-height:1.5em;">Switch to TEST for fast 15-second cycles when market is closed</div>')
 
         trade_mode_status = gr.HTML()
         price_html = gr.HTML()
         decision_html = gr.HTML()
-
-        with gr.Row():
-            run_btn = gr.Button("⟳  REFRESH NOW", variant="primary", scale=1, size="sm")
-            last_updated = gr.Textbox(value="Loading...", interactive=False, show_label=False, scale=5, max_lines=1)
 
         countdown_box = gr.HTML(value=_get_countdown_html(), elem_id="countdown-box")
         gr.HTML('<hr style="border-color:#1e1e1e; margin:4px 0;">')
@@ -721,10 +719,10 @@ def build_ui() -> gr.Blocks:
             update_and_cache_analysis(trade_mode)
             # Reset scheduler timer so it doesn't double-fire immediately after
             if _set_interval_callback:
-                _set_interval_callback(_INTERVALS.get(_current_mode, 1800))
+                _set_interval_callback(_INTERVALS.get(_current_mode, 900))
             return _cached_outputs
 
-        run_btn.click(fn=force_refresh, inputs=[trade_mode_toggle], outputs=outputs)
+        refresh_btn.click(fn=force_refresh, inputs=[trade_mode_toggle], outputs=outputs)
         demo.load(fn=get_latest_ui, inputs=[], outputs=outputs)
 
         mode_radio.change(fn=_set_mode, inputs=[mode_radio], outputs=[])
@@ -733,7 +731,7 @@ def build_ui() -> gr.Blocks:
             _save_ui_state(trade_mode=enabled)
             update_and_cache_analysis(enabled)
             if _set_interval_callback:
-                _set_interval_callback(_INTERVALS.get(_current_mode, 1800))
+                _set_interval_callback(_INTERVALS.get(_current_mode, 900))
             return _cached_outputs
 
         def _on_manual_quota_change(enabled: bool):
