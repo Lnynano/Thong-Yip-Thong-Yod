@@ -213,14 +213,11 @@ def insert_headlines(headlines: list[str]) -> None:
         return
 
     try:
-        future = _executor.submit(_insert_in_thread, headlines)
-        future.result(timeout=45)   # 45s max — avoid blocking Gradio UI
+        # Lite Mode: Skip Knowledge Graph insertion to save memory on 512MB instances
+        print(f"[lightrag_store.py] Lite Mode: {len(headlines)} headlines received (skipping KG insertion to save RAM)")
         _last_inserted_hash = current_hash
-    except concurrent.futures.TimeoutError:
-        print("[lightrag_store.py] Insert timed out (45s) — continuing anyway")
-        _last_inserted_hash = current_hash  # still mark as done to avoid re-trying
     except Exception as e:
-        print(f"[lightrag_store.py] Insert failed: {e}")
+        print(f"[lightrag_store.py] Lite mode log failed: {e}")
 
 
 def query_gold_context(question: str) -> str:

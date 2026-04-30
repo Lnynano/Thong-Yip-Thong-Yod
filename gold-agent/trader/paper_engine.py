@@ -323,6 +323,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
         # Cooldown: extra pause after a LOSS to prevent revenge trading
         cooldown_applied = LOSS_COOLDOWN if any_loss else COOLDOWN_ROUNDS
         state["cooldown"] = cooldown_applied
+        _save(state)  # ✅ CRITICAL FIX: Persist the closed state to DB
         print(f"[paper_engine.py] CLOSED  BASKET  "
               f"Total P&L {total_pnl:+.2f} THB  cooldown={cooldown_applied} rounds")
         return {"action": "CLOSED", "pnl_thb": total_pnl, "trade": state["closed_trades"][-1]}
