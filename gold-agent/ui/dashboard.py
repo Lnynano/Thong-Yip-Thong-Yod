@@ -604,7 +604,7 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         outcome_bar = _outcome_bar_html(outcomes)
         trade_table = _trade_table_html(trades, portfolio.get("open_position"))
         thai_now = datetime.fromtimestamp(_last_refresh_time, THAI_TZ).strftime("%H:%M:%S")
-        interval_str = "30 min" if _current_mode == "REAL" else "15 sec"
+        interval_str = "15 min" if _current_mode == "REAL" else "15 sec"
         last_updated = f"Last updated: {thai_now} (TH)  ·  auto-refresh every {interval_str}"
         tm_html = _trade_mode_html(trade_mode)
 
@@ -657,6 +657,7 @@ def build_ui() -> gr.Blocks:
             gr.HTML('<div style="font-family:Courier New,monospace; color:#444; font-size:0.75em; padding:12px 0; line-height:1.5em;">Switch to TEST for fast 15-second cycles when market is closed</div>')
 
         trade_mode_status = gr.HTML()
+        last_updated_display = gr.HTML('<div style="color:#555; font-family:Courier New; font-size:0.8em; margin-bottom:10px;">Initializing analysis...</div>')
         price_html = gr.HTML()
         decision_html = gr.HTML()
 
@@ -705,7 +706,7 @@ def build_ui() -> gr.Blocks:
         status_box = gr.Textbox(label="STATUS  ·  last action", value="Starting...", interactive=False, max_lines=1)
         indicators_hidden = gr.Textbox(visible=False)
 
-        outputs = [price_html, decision_html, last_updated, chart_price, chart_rsi, rsi_box, macd_box, portfolio_html, equity_chart, outcome_bar, trade_table, news_html, log_table, indicators_hidden, status_box, trade_mode_status, dxy_box, vix_box, countdown_box]
+        outputs = [price_html, decision_html, last_updated_display, chart_price, chart_rsi, rsi_box, macd_box, portfolio_html, equity_chart, outcome_bar, trade_table, news_html, log_table, indicators_hidden, status_box, trade_mode_status, dxy_box, vix_box, countdown_box]
 
         # ── UI Sync Timer ────────────────────────────────────────────────────
         # This replaces the old gr.Timer logic. It simply fetches the latest 
