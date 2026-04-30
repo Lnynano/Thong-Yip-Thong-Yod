@@ -315,7 +315,8 @@ def _price_html(price_thb, price_usd, change_thb, fetch_time, rate, rate_src) ->
 </div>"""
 
 def _trade_mode_html(trade_mode: bool) -> str:
-    from trader.trade_scheduler import current_window_quota_met, _current_window, _load_state
+    state = _load_ui_state()
+    manual_met = state.get("manual_quota_met", False)
     window = _current_window()
     quota_met = current_window_quota_met()
     used = 0
@@ -328,10 +329,11 @@ def _trade_mode_html(trade_mode: bool) -> str:
         
     if not window:
         quota_text = f"<span style='color:#555555; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ ⏸ OUTSIDE TRADING WINDOW ]</span>"
-    elif quota_met:
-        quota_text = f"<span style='color:#c9f002; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ ✅ QUOTA MET : {used}/{min_needed} TRADES ]</span>"
+    elif manual_met:
+        quota_text = f"<span style='color:#c9f002; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ ✅ MANUAL QUOTA MET ]</span>"
     else:
-        quota_text = f"<span style='color:#ff9900; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ ⚠️ QUOTA NOT MET : {used}/{min_needed} TRADES ]</span>"
+        # Show the paper engine's count as a hint, but the color stays orange until manual_met is True
+        quota_text = f"<span style='color:#ff9900; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ ⚠️ QUOTA NOT MET (Paper: {used}/{min_needed}) ]</span>"
 
     if trade_mode:
         return f'<div style="font-family:Courier New,monospace; padding:10px 24px; background:#0d1a00; border:1px solid #2a4400; border-radius:6px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;"><span style="color:#c9f002; font-size:1.1em; font-weight:900; letter-spacing:0.15em;">● TRADE MODE : ON</span><span style="color:#555; font-size:0.78em;">Paper trades will execute automatically on BUY / SELL signals ≥ 65% confidence</span> {quota_text}</div>'
@@ -422,10 +424,10 @@ def _trade_table_html(trades: list, open_position: dict | None = None, filter_mo
     if open_position:
         unreal, unreal_pct = open_position.get("unrealized", 0), open_position.get("unrealized_pct", 0)
         sign, unreal_col = ("+" if unreal >= 0 else ""), ("#c9f002" if unreal >= 0 else "#cc3333")
-        rows += f'<tr style="background:#0d1a0d; border-left:3px solid #c9f002;"><td style="color:#c9f002; padding:6px 10px; font-size:0.8em;">{open_position.get("entry_time", "")[:16]}</td><td style="color:#c9f002; font-weight:700; padding:6px 10px;">OPEN ▶</td><td style="color:#aaa; padding:6px 10px;">฿{open_position["entry_price"]:,.0f}</td><td style="color:#444; padding:6px 10px;">—</td><td style="color:#777; padding:6px 10px;">{open_position["size_bw"]:.5f} bw</td><td style="color:{unreal_col}; font-weight:700; padding:6px 10px;">{sign}฿{unreal:,.2f} ({sign}{unreal_pct:.2f}%)</td></tr>'
+        rows += f'<tr style="background:#0d1a0d; border-left:3px solid #c9f002;"><td style="color:#c9f002; padding:6px 10px; font-size:0.8em;">{open_position.get("entry_time", "")}</td><td style="color:#c9f002; font-weight:700; padding:6px 10px;">OPEN ▶</td><td style="color:#aaa; padding:6px 10px;">฿{open_position["entry_price"]:,.0f}</td><td style="color:#444; padding:6px 10px;">—</td><td style="color:#777; padding:6px 10px;">{open_position["size_bw"]:.5f} bw</td><td style="color:{unreal_col}; font-weight:700; padding:6px 10px;">{sign}฿{unreal:,.2f} ({sign}{unreal_pct:.2f}%)</td></tr>'
     for t in trades:
         oc, sign = ("#c9f002" if t["outcome"] == "WIN" else "#cc3333"), ("+" if t["pnl_thb"] >= 0 else "")
-        rows += f'<tr><td style="color:#555; padding:6px 10px;">{t.get("exit_time", "—")[:16]}</td><td style="color:{oc}; font-weight:700; padding:6px 10px;">{t["outcome"]}</td><td style="color:#888; padding:6px 10px;">฿{t["entry_price"]:,.0f}</td><td style="color:#888; padding:6px 10px;">฿{t["exit_price"]:,.0f}</td><td style="color:#777; padding:6px 10px;">{t["size_bw"]:.5f} bw</td><td style="color:{oc}; font-weight:700; padding:6px 10px;">{sign}฿{t["pnl_thb"]:,.2f} ({sign}{t["pnl_pct"]:.2f}%)</td></tr>'
+        rows += f'<tr><td style="color:#555; padding:6px 10px;">{t.get("exit_time", "—")}</td><td style="color:{oc}; font-weight:700; padding:6px 10px;">{t["outcome"]}</td><td style="color:#888; padding:6px 10px;">฿{t["entry_price"]:,.0f}</td><td style="color:#888; padding:6px 10px;">฿{t["exit_price"]:,.0f}</td><td style="color:#777; padding:6px 10px;">{t["size_bw"]:.5f} bw</td><td style="color:{oc}; font-weight:700; padding:6px 10px;">{sign}฿{t["pnl_thb"]:,.2f} ({sign}{t["pnl_pct"]:.2f}%)</td></tr>'
     return f'<div style="font-family:\'Courier New\',monospace; overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:0.83em; background:#0f0f0f; color:#bbb;"><thead><tr style="border-bottom:1px solid #222;"><th style="color:#444; text-align:left; padding:8px 10px; letter-spacing:0.1em; font-size:0.75em;">TIME</th><th style="color:#444; text-align:left; padding:8px 10px; letter-spacing:0.1em; font-size:0.75em;">RESULT</th><th style="color:#444; text-align:left; padding:8px 10px; letter-spacing:0.1em; font-size:0.75em;">ENTRY</th><th style="color:#444; text-align:left; padding:8px 10px; letter-spacing:0.1em; font-size:0.75em;">EXIT</th><th style="color:#444; text-align:left; padding:8px 10px; letter-spacing:0.1em; font-size:0.75em;">SIZE</th><th style="color:#444; text-align:left; padding:8px 10px; letter-spacing:0.1em; font-size:0.75em;">P&L</th></tr></thead><tbody>{rows}</tbody></table></div>'
 
 def _news_html(headlines: list, sentiment: str) -> str:
@@ -516,7 +518,9 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
             _save_ui_state(manual_quota_met=False, last_window_name=win_name)
             state = _load_ui_state() # reload
 
-        _quota_pressure = can_trade_now() and not current_window_quota_met() and not state.get("manual_quota_met", False)
+        # ✅ MASTER FIX: Only stop pressure if the USER says it's met via the checkbox
+        manual_met = state.get("manual_quota_met", False)
+        _quota_pressure = can_trade_now() and not manual_met
         agent = run_agent(quota_pressure=_quota_pressure, open_positions=num_open)
         decision = agent.get("decision", "HOLD")
         confidence = agent.get("confidence", 0)
@@ -526,7 +530,7 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
 
         _mins_left = minutes_until_window_end()
         if (decision == "HOLD" and can_trade_now() and _mins_left is not None and _mins_left <= 90 
-            and not current_window_quota_met() and not state.get("manual_quota_met", False)):
+            and not manual_met):
             
             failsafe_triggered = True   # ✅ ADD
             
