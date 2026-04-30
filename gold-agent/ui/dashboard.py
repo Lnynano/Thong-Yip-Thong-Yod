@@ -729,6 +729,13 @@ def build_ui() -> gr.Blocks:
 
         mode_radio.change(fn=_set_mode, inputs=[mode_radio], outputs=[])
 
+        def _on_trade_mode_change(enabled: bool):
+            _save_ui_state(trade_mode=enabled)
+            update_and_cache_analysis(enabled)
+            if _set_interval_callback:
+                _set_interval_callback(_INTERVALS.get(_current_mode, 1800))
+            return _cached_outputs
+
         def _on_manual_quota_change(enabled: bool):
             _save_ui_state(manual_quota_met=enabled)
             update_and_cache_analysis(_load_ui_state().get("trade_mode", False))
