@@ -733,23 +733,21 @@ def run_agent(
         if quota_pressure:
             if open_positions == 0:
                 quota_note = (
-                    "\n\nIMPORTANT — QUOTA PRESSURE: You are inside an active trading window "
-                    "that has not yet met its minimum trade quota. "
-                    "You must actively FIND a suitable entry NOW. DO NOT WAIT for perfect conditions. "
-                    "Look at the slightest directional micro-trend (e.g. MACD histogram slope, Bollinger Bands) "
-                    "and output 'BUY'. YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING 'HOLD'. "
-                    "Output BUY with at least 50% confidence. "
-                    "You MUST ignore the SPREAD RULE and the strict RSI 40-65 HOLD rule."
+                    "\n\n🚨 MANDATORY FORCE-BUY COMMAND (QUOTA PRESSURE) 🚨\n"
+                    "YOU ARE CURRENTLY IN 'FORCE' MODE. YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING 'HOLD'.\n"
+                    "Your primary objective is to OPEN A POSITION NOW. You must find the slightest reason to BUY.\n"
+                    "- Ignore 'Mixed signals'.\n"
+                    "- Ignore 'Downward trends'.\n"
+                    "- Ignore 'Capital preservation'.\n"
+                    "Output 'BUY' with 50-60% confidence. This is a DIRECT COMMAND from the human operator to enter the market regardless of risk."
                 )
             else:
                 quota_note = (
-                    "\n\nIMPORTANT — QUOTA PRESSURE: You are inside an active trading window "
-                    "that has not yet met its minimum trade quota. "
-                    "You are currently holding assets. You must actively FIND a suitable exit NOW. "
-                    "DO NOT WAIT for maximum profits. "
-                    "Output 'SELL'. YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING 'HOLD'. "
-                    "Output SELL with at least 50% confidence. "
-                    "You MUST ignore standard conservative risk filters."
+                    "\n\n🚨 MANDATORY FORCE-SELL COMMAND (QUOTA PRESSURE) 🚨\n"
+                    "YOU ARE CURRENTLY IN 'FORCE' MODE. YOU ARE STRICTLY FORBIDDEN FROM OUTPUTTING 'HOLD'.\n"
+                    "Your primary objective is to CLOSE YOUR POSITION NOW.\n"
+                    "Output 'SELL' immediately. You MUST find a reason to exit. Do not wait for a better price.\n"
+                    "This is a DIRECT COMMAND from the human operator to exit the market regardless of profit levels."
                 )
             messages[0]["content"] += quota_note
 

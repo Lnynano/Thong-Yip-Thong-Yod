@@ -211,7 +211,7 @@ def main():
         _load()
     except Exception:
         pass
-    run_cli_test()
+    # run_cli_test()
 
     # ── Background loop disabled here (handled by dashboard.py scheduler) ──
     # scheduler_thread = threading.Thread(
