@@ -64,11 +64,11 @@ def start_scheduler():
         scheduler.start()
     _update_scheduler_interval()
 
-def update_and_cache_analysis(trade_mode: bool = False):
+def update_and_cache_analysis(trade_mode: bool = False, force_pressure: bool = False):
     """Called by main.py background loop to update the UI globally."""
     global _cached_outputs
     with _init_lock:
-        _cached_outputs = run_full_analysis(trade_mode)
+        _cached_outputs = run_full_analysis(trade_mode, force_pressure)
 
 def get_latest_ui():
     """Fast UI poller: returns the latest cached results without re-running analysis."""
@@ -102,7 +102,7 @@ _UI_STATE_PATH = os.path.join(_BASE_DIR, "data", "ui_state.json")
 _UI_STATE_DEFAULTS = {
     "trade_mode": os.getenv("DEFAULT_TRADE_MODE", "false").lower() == "true", 
     "refresh_mode": "REAL",
-    "manual_quota_met": False,
+    "quota_pressure": False,
     "last_window_name": ""
 }
 
@@ -121,8 +121,9 @@ def _save_ui_state(**kwargs) -> None:
         os.makedirs(os.path.dirname(_UI_STATE_PATH), exist_ok=True)
         with open(_UI_STATE_PATH, "w") as f:
             json.dump(state, f)
-    except Exception:
-        pass
+        print(f"[dashboard.py] UI state saved: {kwargs}")
+    except Exception as e:
+        print(f"[dashboard.py] UI state save failed: {e}")
 
 _set_trade_mode_callback = None
 _set_interval_callback = None
@@ -318,24 +319,23 @@ def _price_html(price_thb, price_usd, change_thb, fetch_time, rate, rate_src) ->
 
 def _trade_mode_html(trade_mode: bool) -> str:
     state = _load_ui_state()
-    manual_met = state.get("manual_quota_met", False)
+    pressure = state.get("quota_pressure", False)
     window = _current_window()
-    quota_met = current_window_quota_met()
+    
     used = 0
     min_needed = 2
-    
     if window:
-        state = _load_state()
-        used = state.get("windows", {}).get(window["name"], 0)
+        sched = _load_state()
+        used = sched.get("windows", {}).get(window["name"], 0)
         min_needed = window["min_trades"]
         
     if not window:
         quota_text = f"<span style='color:#555555; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ ⏸ OUTSIDE TRADING WINDOW ]</span>"
-    elif manual_met:
-        quota_text = f"<span style='color:#c9f002; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ ✅ MANUAL QUOTA MET ]</span>"
+    elif pressure:
+        quota_text = f"<span style='color:#ffc107; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ 🔥 FORCE PRESSURE ACTIVE ({used}/{min_needed}) ]</span>"
     else:
-        # Show the paper engine's count as a hint, but the color stays orange until manual_met is True
-        quota_text = f"<span style='color:#ff9900; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ ⚠️ QUOTA NOT MET (Paper: {used}/{min_needed}) ]</span>"
+        color = "#c9f002" if used >= min_needed else "#555"
+        quota_text = f"<span style='color:{color}; font-weight:bold; font-size:0.85em; letter-spacing:0.1em;'>[ ⌛ STANDBY ({used}/{min_needed}) ]</span>"
 
     if trade_mode:
         return f'<div style="font-family:Courier New,monospace; padding:10px 24px; background:#0d1a00; border:1px solid #2a4400; border-radius:6px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;"><span style="color:#c9f002; font-size:1.1em; font-weight:900; letter-spacing:0.15em;">● TRADE MODE : ON</span><span style="color:#555; font-size:0.78em;">Paper trades will execute automatically on BUY / SELL signals ≥ 65% confidence</span> {quota_text}</div>'
@@ -440,7 +440,7 @@ def _news_html(headlines: list, sentiment: str) -> str:
 # ─────────────────────────────────────────────────────────────
 # Main analysis pipeline
 # ─────────────────────────────────────────────────────────────
-def run_full_analysis(trade_mode: bool = False) -> tuple:
+def run_full_analysis(trade_mode: bool = False, force_pressure: bool = False) -> tuple:
     global _last_refresh_time
     _last_refresh_time = time.time()
 
@@ -516,39 +516,26 @@ def run_full_analysis(trade_mode: bool = False) -> tuple:
         window = _current_window()
         win_name = window["name"] if window else "none"
         if state.get("last_window_name") != win_name:
-            _save_ui_state(manual_quota_met=False, last_window_name=win_name)
+            _save_ui_state(quota_pressure=False, last_window_name=win_name)
             state = _load_ui_state() # reload
 
-        # ✅ MASTER FIX: Only stop pressure if the USER says it's met via the checkbox
-        manual_met = state.get("manual_quota_met", False)
-        _quota_pressure = can_trade_now() and not manual_met
+        # ✅ MASTER FIX: Use the direct parameter if provided, otherwise fallback to saved state
+        _quota_pressure = force_pressure or state.get("quota_pressure", False)
+        
+        if _quota_pressure:
+            print("\n" + "="*50)
+            print(">>> [DASHBOARD] FORCE QUOTA PRESSURE IS ON <<<")
+            print("="*50 + "\n")
+        else:
+            print("[dashboard.py] Pressure mode: OFF")
+
         agent = run_agent(quota_pressure=_quota_pressure, open_positions=num_open)
         decision = agent.get("decision", "HOLD")
         confidence = agent.get("confidence", 0)
         reasoning = agent.get("reasoning", "No reasoning.")
 
-        failsafe_triggered = False
+        failsafe_triggered = False  # Auto-failsafe disabled per user request
 
-        _mins_left = minutes_until_window_end()
-        if (decision == "HOLD" and can_trade_now() and _mins_left is not None and _mins_left <= 90 
-            and not manual_met):
-            
-            failsafe_triggered = True   # ✅ ADD
-            
-            agent = run_agent(quota_pressure=True, failsafe_pressure=True, open_positions=num_open)
-            decision = agent.get("decision", "HOLD")
-            confidence = agent.get("confidence", 0)
-            reasoning = agent.get("reasoning", "No reasoning.")
-            
-            if decision == "HOLD":
-                from trader.paper_engine import _load
-                p_state = _load()
-                has_positions = len(p_state.get("open_positions", [])) > 0
-                
-                if has_positions:
-                    decision, confidence, reasoning = "SELL", 65, "[FAILSAFE] Window closing, quota not met. Forced SELL signal."
-                else:
-                    decision, confidence, reasoning = "BUY", 65, "[FAILSAFE] Window closing, quota not met. Forced BUY signal."
 
         if decision in ("BUY", "SELL") and can_trade_now(): record_trade()
 
@@ -652,10 +639,10 @@ def build_ui() -> gr.Blocks:
 
         with gr.Row():
             trade_mode_toggle = gr.Checkbox(label="AUTO TRADE MODE", value=_init_trade_mode, scale=1)
-            manual_quota_toggle = gr.Checkbox(label="QUOTA MANUALLY MET (Stop Pressure)", value=_saved.get("manual_quota_met", False), scale=1)
+            quota_pressure_toggle = gr.Checkbox(label="🔥 FORCE QUOTA PRESSURE", value=_saved.get("quota_pressure", False), scale=1)
             refresh_btn = gr.Button("🔄 REFRESH NOW", variant="primary", scale=2)
             
-        gr.HTML('<div style="font-family:Courier New,monospace; color:#666; font-size:0.75em; margin-bottom:15px;">AUTO MODE: Trades on ≥ 65% conf | QUOTA OVERRIDE: Stop panic/failsafe trades for this window</div>')
+        gr.HTML('<div style="font-family:Courier New,monospace; color:#666; font-size:0.75em; margin-bottom:15px;">AUTO MODE: Trades on ≥ 65% conf | PRESSURE: Bot ignores conservative filters to find a trade</div>')
 
         with gr.Row(visible=DEV_MODE):
             mode_radio = gr.Radio(choices=["REAL", "TEST"], value=_init_refresh_mode, label="REFRESH MODE  —  REAL = every 15 min  ·  TEST = every 15 sec", interactive=True, scale=3)
@@ -689,8 +676,13 @@ def build_ui() -> gr.Blocks:
                 gr.Markdown("## P&L CURVE")
                 equity_chart = gr.Plot(label="")
                 with gr.Row():
+                    sync_buy_btn = gr.Button("📥 SYNC: I HAVE BOUGHT", variant="secondary")
+                    sync_sell_btn = gr.Button("📤 SYNC: I HAVE SOLD", variant="secondary")
+                
+                with gr.Row():
                     share_btn = gr.Button("📤  SHARE P&L CARD", variant="secondary", scale=1, size="sm")
                     pl_card_file = gr.File(label="Download P&L Card", visible=False)
+                
                 with gr.Row(visible=DEV_MODE):
                     reset_btn = gr.Button("↺  RESET PORTFOLIO", variant="secondary", scale=1, size="sm")
                     gr.HTML('<div style="color:#333; font-size:0.75em; padding:8px; font-family:Courier New;">Paper trading only — no real money.</div>')
@@ -721,32 +713,60 @@ def build_ui() -> gr.Blocks:
         ui_sync_timer.tick(fn=get_latest_ui, inputs=[], outputs=outputs)
 
         # ── Manual Refresh ───────────────────────────────────────────────────
-        def force_refresh(trade_mode):
-            update_and_cache_analysis(trade_mode)
+        def force_refresh(trade_mode, pressure_mode):
+            update_and_cache_analysis(trade_mode, pressure_mode)
             # Reset scheduler timer so it doesn't double-fire immediately after
             if _set_interval_callback:
                 _set_interval_callback(_INTERVALS.get(_current_mode, 900))
             return _cached_outputs
 
-        refresh_btn.click(fn=force_refresh, inputs=[trade_mode_toggle], outputs=outputs)
+        refresh_btn.click(fn=force_refresh, inputs=[trade_mode_toggle, quota_pressure_toggle], outputs=outputs)
         demo.load(fn=get_latest_ui, inputs=[], outputs=outputs)
 
         mode_radio.change(fn=_set_mode, inputs=[mode_radio], outputs=[])
 
-        def _on_trade_mode_change(enabled: bool):
+        def _on_trade_mode_change(enabled: bool, pressure_enabled: bool):
             _save_ui_state(trade_mode=enabled)
-            update_and_cache_analysis(enabled)
+            update_and_cache_analysis(enabled, pressure_enabled)
             if _set_interval_callback:
                 _set_interval_callback(_INTERVALS.get(_current_mode, 900))
             return _cached_outputs
 
-        def _on_manual_quota_change(enabled: bool):
-            _save_ui_state(manual_quota_met=enabled)
-            update_and_cache_analysis(_load_ui_state().get("trade_mode", False))
+        def _on_manual_quota_change(enabled: bool, trade_enabled: bool):
+            _save_ui_state(quota_pressure=enabled)
+            update_and_cache_analysis(trade_enabled, enabled)
             return _cached_outputs
 
-        trade_mode_toggle.change(fn=_on_trade_mode_change, inputs=[trade_mode_toggle], outputs=outputs)
-        manual_quota_toggle.change(fn=_on_manual_quota_change, inputs=[manual_quota_toggle], outputs=outputs)
+        trade_mode_toggle.change(fn=_on_trade_mode_change, inputs=[trade_mode_toggle, quota_pressure_toggle], outputs=outputs)
+        quota_pressure_toggle.change(fn=_on_manual_quota_change, inputs=[quota_pressure_toggle, trade_mode_toggle], outputs=outputs)
+
+        def _manual_buy_sync(trade_mode, pressure_mode):
+            from trader.paper_engine import sync_manual_buy
+            from data.fetch import get_hsh_price, get_latest_price
+            from converter.thai import convert_to_thb
+            
+            # Get latest price for sync
+            hsh = get_hsh_price()
+            price_thb = hsh["sell"] if hsh else convert_to_thb(get_latest_price())["thb_per_baht_weight_thai"]
+            
+            sync_manual_buy(price_thb)
+            update_and_cache_analysis(trade_mode, pressure_mode)
+            return _cached_outputs
+
+        def _manual_sell_sync(trade_mode, pressure_mode):
+            from trader.paper_engine import sync_manual_sell
+            from data.fetch import get_hsh_price, get_latest_price
+            from converter.thai import convert_to_thb
+            
+            hsh = get_hsh_price()
+            price_thb = hsh["buy"] if hsh else convert_to_thb(get_latest_price())["thb_per_baht_weight_thai"]
+            
+            sync_manual_sell(price_thb)
+            update_and_cache_analysis(trade_mode, pressure_mode)
+            return _cached_outputs
+
+        sync_buy_btn.click(fn=_manual_buy_sync, inputs=[trade_mode_toggle, quota_pressure_toggle], outputs=outputs)
+        sync_sell_btn.click(fn=_manual_sell_sync, inputs=[trade_mode_toggle, quota_pressure_toggle], outputs=outputs)
 
         def _reset():
             from trader.paper_engine import reset_portfolio, get_portfolio_summary, get_trade_history, get_equity_history, get_recent_outcomes

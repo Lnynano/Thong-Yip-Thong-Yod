@@ -336,6 +336,107 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
     return {"action": "HOLD", "reason": "Signal is HOLD or no matching position"}
 
 
+def sync_manual_buy(price_thb: float) -> dict:
+    """
+    Manually force a position open at the given price.
+    Increments the window quota via record_trade.
+    """
+    state = _load()
+    if price_thb <= 0:
+        return {"error": "Invalid price"}
+
+    now = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    available = state["balance"]
+    
+    # Use 95% of balance for manual sync
+    gross = available * 0.95
+    if gross < MIN_TRADE_THB:
+        return {"error": f"Insufficient balance (฿{available:,.0f}) for ฿{MIN_TRADE_THB:,.0f} min trade"}
+
+    fee = _calc_fee(gross)
+    cost = round(gross + fee, 2)
+    size_bw = gross / price_thb
+
+    state["balance"] -= cost
+    state["open_positions"].append({
+        "direction": "BUY",
+        "entry_price": price_thb,
+        "highest_price": price_thb,
+        "size_bw": round(size_bw, 6),
+        "cost_thb": round(gross, 2),
+        "open_fee": fee,
+        "entry_time": now,
+        "confidence": 100,
+        "size_pct": 0.95,
+        "is_manual_sync": True
+    })
+    _record_equity(state, price_thb)
+    _save(state)
+    
+    # Increment quota count so the bot knows a manual trade happened
+    try:
+        from trader.trade_scheduler import record_trade
+        record_trade()
+    except Exception:
+        pass
+
+    print(f"[paper_engine.py] MANUAL SYNC: OPENED {size_bw:.5f} bw @ {price_thb:,.0f}")
+    return {"action": "OPENED", "price": price_thb, "size_bw": size_bw}
+
+
+def sync_manual_sell(price_thb: float) -> dict:
+    """
+    Manually force-close all open positions at the given price.
+    Increments the window quota via record_trade.
+    """
+    state = _load()
+    if not state.get("open_positions"):
+        return {"error": "No open positions to sync"}
+    
+    now = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    total_pnl = 0.0
+    
+    for pos in state["open_positions"]:
+        gross_proceeds = pos["size_bw"] * price_thb
+        close_fee = _calc_fee(gross_proceeds)
+        open_fee = pos.get("open_fee", 0.0)
+        net_proceeds = round(gross_proceeds - close_fee, 2)
+        
+        pnl = net_proceeds - pos["cost_thb"] - open_fee
+        total_pnl += pnl
+        
+        state["balance"] = max(0.0, state["balance"] + net_proceeds)
+        state["closed_trades"].append({
+            "entry_time": pos["entry_time"],
+            "exit_time": now,
+            "entry_price": pos["entry_price"],
+            "exit_price": price_thb,
+            "size_bw": pos["size_bw"],
+            "cost_thb": pos["cost_thb"],
+            "open_fee": open_fee,
+            "close_fee": close_fee,
+            "total_fees": round(open_fee + close_fee, 2),
+            "pnl_thb": round(pnl, 2),
+            "pnl_pct": round(pnl / (pos["cost_thb"] + open_fee) * 100, 2),
+            "outcome": "WIN" if pnl >= 0 else "LOSS",
+            "is_manual_sync": True
+        })
+        
+    state["open_positions"] = []
+    _save(state)
+
+    # Increment quota count
+    try:
+        from trader.trade_scheduler import record_trade
+        record_trade()
+    except Exception:
+        pass
+
+    print(f"[paper_engine.py] MANUAL SYNC: CLOSED all positions at {price_thb:,.0f}")
+    return {"action": "CLOSED", "pnl": total_pnl}
+
+
+
 # ─────────────────────────────────────────────────────────────
 # Portfolio queries
 # ─────────────────────────────────────────────────────────────
