@@ -87,8 +87,8 @@ def get_latest_ui():
         interval_str = "30 min" if _current_mode == "REAL" else "15 sec"
         out[2] = f"Last updated: {thai_time} (TH)  ·  auto-refresh every {interval_str}"
         
-        # Index 18 is `countdown_box`
-        out[18] = _get_countdown_html()
+        # Index 19 is `countdown_box`
+        out[19] = _get_countdown_html()
         
         return tuple(out)
         
@@ -466,6 +466,7 @@ def run_full_analysis(trade_mode: bool = False, force_pressure: bool = False) ->
         macd_signal = "BULLISH" if macd["histogram"] > 0 else "BEARISH"
         rsi_str = f"{rsi:.1f}  —  {rsi_signal}"
         macd_str = f"{macd['histogram']:+.2f}  —  {macd_signal}"
+        bb_str = f"Upper: {bb['upper']:,.2f}  ·  Mid: {bb['middle']:,.2f}  ·  Lower: {bb['lower']:,.2f}  [{bb['signal']}]"
         regime = calculate_market_regime(df)
 
         dxy_str, vix_str = "N/A", "N/A"
@@ -552,7 +553,8 @@ def run_full_analysis(trade_mode: bool = False, force_pressure: bool = False) ->
             else:
                 _min_conf = 50 if _quota_pressure else None
                 
-            trade_result = execute_paper_trade(decision, confidence, thb_now, min_confidence=_min_conf)
+            thb_bid = hsh["buy"] if hsh else thb_now
+            trade_result = execute_paper_trade(decision, confidence, thb_now, min_confidence=_min_conf, bid_price_thb=thb_bid)
         elif trade_mode and not can_trade_now(): trade_result = {"action": "SKIP", "reason": "Outside trading window"}
         else: trade_result = {"action": "DISABLED", "reason": "Trade mode is OFF"}
 
@@ -609,7 +611,7 @@ def run_full_analysis(trade_mode: bool = False, force_pressure: bool = False) ->
         elif action == "SKIP": status = f"⏸  {trade_result.get('reason', 'No trade')}  ·  {decision} {confidence}%"
         else: status = f"HOLD  ·  no trade action  ·  fetched {fetch_time}"
 
-        return (price_block, dec_block, last_updated, price_chart_fig, rsi_chart_fig, rsi_str, macd_str, port_block, eq_chart, outcome_bar, trade_table, news_block, log_df, indicators_str, status, tm_html, dxy_str, vix_str, _get_countdown_html())
+        return (price_block, dec_block, last_updated, price_chart_fig, rsi_chart_fig, rsi_str, macd_str, bb_str, port_block, eq_chart, outcome_bar, trade_table, news_block, log_df, indicators_str, status, tm_html, dxy_str, vix_str, _get_countdown_html())
 
     except Exception as e:
         err = f"Error: {e}"
@@ -623,7 +625,7 @@ def _error_outputs(msg: str, trade_mode: bool = False) -> tuple:
     port_block = _portfolio_html(portfolio)
     try: eq_chart = _build_equity_chart(get_equity_history())
     except Exception: eq_chart = None
-    return (f'<div style="color:#cc3333;padding:20px;font-family:Courier New;">{msg}</div>', _decision_html("HOLD", 0, msg, trade_mode, key_factors=[], risk_note="", confluence=5.0, regime="RANGING", bb_lower=0.0, bb_upper=0.0, current_price_thb=0.0), "Last updated: —", None, None, "N/A", "N/A", port_block, eq_chart, _outcome_bar_html(get_recent_outcomes(15)), _trade_table_html(get_trade_history(20), portfolio.get("open_position")), f'<div style="color:#555;padding:16px;">{msg}</div>', get_recent_logs(50), "—", msg, _trade_mode_html(trade_mode), "N/A", "N/A", _get_countdown_html())
+    return (f'<div style="color:#cc3333;padding:20px;font-family:Courier New;">{msg}</div>', _decision_html("HOLD", 0, msg, trade_mode, key_factors=[], risk_note="", confluence=5.0, regime="RANGING", bb_lower=0.0, bb_upper=0.0, current_price_thb=0.0), "Last updated: —", None, None, "N/A", "N/A", "N/A", port_block, eq_chart, _outcome_bar_html(get_recent_outcomes(15)), _trade_table_html(get_trade_history(20), portfolio.get("open_position")), f'<div style="color:#555;padding:16px;">{msg}</div>', get_recent_logs(50), "—", msg, _trade_mode_html(trade_mode), "N/A", "N/A", _get_countdown_html())
 
 # ─────────────────────────────────────────────────────────────
 # UI Layout
@@ -666,6 +668,7 @@ def build_ui() -> gr.Blocks:
                 with gr.Row():
                     rsi_box = gr.Textbox(label="RSI (14)", interactive=False)
                     macd_box = gr.Textbox(label="MACD Histogram", interactive=False)
+                    bb_box = gr.Textbox(label="Bollinger Bands (20, 2)", interactive=False)
                 gr.Markdown("## MACRO")
                 with gr.Row():
                     dxy_box = gr.Textbox(label="DXY  —  US Dollar Index  (↑ bearish gold  ·  ↓ bullish gold)", interactive=False)
@@ -703,7 +706,7 @@ def build_ui() -> gr.Blocks:
         status_box = gr.Textbox(label="STATUS  ·  last action", value="Starting...", interactive=False, max_lines=1)
         indicators_hidden = gr.Textbox(visible=False)
 
-        outputs = [price_html, decision_html, last_updated_display, chart_price, chart_rsi, rsi_box, macd_box, portfolio_html, equity_chart, outcome_bar, trade_table, news_html, log_table, indicators_hidden, status_box, trade_mode_status, dxy_box, vix_box, countdown_box]
+        outputs = [price_html, decision_html, last_updated_display, chart_price, chart_rsi, rsi_box, macd_box, bb_box, portfolio_html, equity_chart, outcome_bar, trade_table, news_html, log_table, indicators_hidden, status_box, trade_mode_status, dxy_box, vix_box, countdown_box]
 
         # ── UI Sync Timer ────────────────────────────────────────────────────
         # This replaces the old gr.Timer logic. It simply fetches the latest 

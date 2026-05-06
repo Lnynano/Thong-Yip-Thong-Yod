@@ -40,23 +40,23 @@ Your analysis is used by Thai retail investors, so you also consider Thai Baht p
 4. Only issue BUY when macro sentiment ALIGNS with momentum indicators.
 5. Pre-computed indicators are authoritative — NEVER re-calculate math yourself.
 6. You must call all three tools (get_price, get_indicators, get_news) before deciding.
-7. SPREAD RULE (CRITICAL): The gold price has a buy-sell spread of ~200-400 THB.
-   - When you BUY, you pay the SELL price (higher). When you SELL, you receive the BUY price (lower).
-   - You start every trade already down by the spread amount.
-   - ONLY BUY if your expected upside is at least 600 THB to cover spread and profit.
+7. SPREAD RULE (CRITICAL): The Gold asset price has a buy-sell spread of about 0.3% (~200 THB per baht-weight).
+   - When you BUY, you pay the SELL price. When you SELL, you receive the BUY price.
+   - ONLY BUY if you expect the Gold asset price chart to increase by at least 0.4% to 0.5% (approx 250-350 THB movement on the chart).
+   - IMPORTANT: This is the required movement of the GOLD PRICE, not the profit on the user's portfolio balance or trade size.
    - If market conditions are flat, HOLD — capital preservation is #1 priority.
 
 # TREND & REGIME FILTER (PRIORITY)
 # HISTORICAL EXPERT KNOWLEDGE (Learned from 2025 Data)
 1. DXY CORRELATION: Gold and DXY are inversely correlated. If DXY is in an uptrend, avoid BUYING Gold even if indicators look oversold.
-2. TREND ALIGNMENT (CRITICAL): The 'daily_trend' from tools is your primary guide. Do not BUY if the 5-day trend is "DOWN", and do not SELL if it is "UP", unless news is extremely strong (>8 confidence).
-3. SPREAD AWARENESS: Every HSH trade starts with a -200 THB disadvantage. If the technical setup doesn't suggest a move of at least 400-500 THB, the trade is low quality.
+2. TREND ALIGNMENT: The daily macro trend provides context, but since you are a 15-minute scalper, you may trade against the daily trend if the 15-minute indicators are extremely strong.
+3. SPREAD AWARENESS: Every trade starts at a ~0.3% disadvantage due to the spread. If the technical setup doesn't suggest the Gold chart price will rise by at least 0.4% - 0.5%, the trade is low quality.
 4. SIDEWAYS TRAP: Avoid trading in the middle of Bollinger Bands or when RSI is 45-55. Wait for extremes.
 
 # DECISION CRITERIA
-- BUY  : RSI < 35 AND MACD histogram slope is positive AND Trend is NOT Down.
+- BUY  : 15m RSI < 35 AND MACD histogram slope is positive.
          Confidence >= 75% required.
-- SELL : RSI > 65 AND MACD histogram slope is negative AND Trend is NOT Up.
+- SELL : 15m RSI > 65 AND MACD histogram slope is negative.
          Confidence >= 75% required.
 - HOLD : Mixed signals, RSI 40-60, or Trend-Signal conflict.
 
@@ -230,14 +230,14 @@ def _execute_tool(
 
         # ── Tool: get_indicators ─────────────────────────────────────────────
         elif tool_name == "get_indicators":
-            from data.fetch import get_gold_price
+            from data.fetch import get_gold_price_intraday
             from indicators.tech import (
                 calculate_rsi,
                 calculate_macd,
                 calculate_bollinger_bands,
             )
 
-            df = get_gold_price()
+            df = get_gold_price_intraday(interval="15m", days=5)
             if df.empty:
                 return json.dumps({"error": "Could not calculate indicators."})
 
@@ -419,7 +419,7 @@ def _execute_tool(
 
             result = {
                 "note": "All values are pre-computed deterministically. Do NOT recalculate.",
-                "timeframe": "D1 (primary)",
+                "timeframe": "M15 (primary)",
                 "pre_scored_signals": {
                     "buy_score": f"{buy_score} / 5",
                     "sell_score": f"{sell_score} / 5",
@@ -684,7 +684,10 @@ def run_agent(
         api_key = os.getenv(
             "GEMINI_API_KEY", ""
         ).strip()  # Gemini key stored as OPENAI_API_KEY in .env
-        base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+        base_url = os.getenv(
+            "GEMINI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
         client = OpenAI(
             api_key=api_key,
             base_url=base_url,
