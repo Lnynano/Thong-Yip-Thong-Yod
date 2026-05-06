@@ -684,9 +684,10 @@ def run_agent(
         api_key = os.getenv(
             "GEMINI_API_KEY", ""
         ).strip()  # Gemini key stored as OPENAI_API_KEY in .env
+        base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
         client = OpenAI(
             api_key=api_key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            base_url=base_url,
         )
         model_name = "gemini-2.5-flash-lite"
 
@@ -857,7 +858,9 @@ def run_agent(
         # ── Max iterations hit (infinite loop guard) ──────────────
         print("[trading_agent.py] Max iterations reached without final answer.")
         agent_trace.append("[FALLBACK] Max iterations reached → HOLD")
-        default_result["reasoning"] = "Max iterations reached without final answer. (AI fallback HOLD)"
+        default_result["reasoning"] = (
+            "Max iterations reached without final answer. (AI fallback HOLD)"
+        )
         default_result["agent_trace"] = agent_trace
         return default_result
 

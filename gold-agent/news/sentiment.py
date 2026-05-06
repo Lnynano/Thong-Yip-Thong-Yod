@@ -222,7 +222,8 @@ def get_sentiment_summary(headlines: list[str]) -> str:
         model_name = "gpt-4o-mini"
     else:
         api_key = os.getenv("GEMINI_API_KEY", "").strip()
-        client = OpenAI(api_key=api_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
+        base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+        client = OpenAI(api_key=api_key, base_url=base_url)
         model_name = "gemini-2.5-flash-lite"
 
     if not api_key:

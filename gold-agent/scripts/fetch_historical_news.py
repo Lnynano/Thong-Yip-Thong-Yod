@@ -63,9 +63,10 @@ def score_sentiment_gemini(headlines: list[str], date_str: str) -> dict:
         return _keyword_sentiment(headlines)
 
     try:
+        base_url = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
         client = OpenAI(
             api_key=api_key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+            base_url=base_url
         )
         headlines_text = "\n".join(f"- {h}" for h in headlines[:5])
         prompt = f"""Analyze these gold market news headlines from {date_str}:
