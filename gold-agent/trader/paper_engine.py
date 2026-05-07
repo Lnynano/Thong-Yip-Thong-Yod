@@ -177,7 +177,7 @@ def _calc_fee(trade_value_thb: float) -> float:
     return round(trade_value_thb * TRADE_FEE_PCT + TRADE_FEE_FLAT_THB, 2)
 
 
-def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_confidence: int | None = None) -> dict:
+def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_confidence: int | None = None, bid_price_thb: float | None = None) -> dict:
     """
     Evaluate the agent decision and simulate a trade if conditions are met.
 
@@ -207,25 +207,30 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
 
     now = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
+    # For exiting positions, we use the bid price if available
+    exit_price = bid_price_thb if bid_price_thb is not None else price_thb
+
     # ── Auto TP/SL + trailing stop check (overrides agent decision) ──
-    for pos in state.get("open_positions", []):
-        entry = pos["entry_price"]
-        change_pct = (price_thb - entry) / entry
+    has_positions = len(state.get("open_positions", [])) > 0
+    if has_positions:
+        for pos in state["open_positions"]:
+            entry = pos["entry_price"]
+            change_pct = (exit_price - entry) / entry
 
-        # Update highest price seen (for trailing stop)
-        highest = max(pos.get("highest_price", entry), price_thb)
-        pos["highest_price"] = highest
+            # Update highest price seen (for trailing stop)
+            highest = max(pos.get("highest_price", entry), exit_price)
+            pos["highest_price"] = highest
 
-        # Trailing stop: if price drops TRAILING_SL_PCT below the peak
-        trailing_sl_price = highest * (1 - TRAILING_SL_PCT)
-        trailing_triggered = (price_thb <= trailing_sl_price and highest > entry)
+            # Trailing stop: if price drops TRAILING_SL_PCT below the peak
+            trailing_sl_price = highest * (1 - TRAILING_SL_PCT)
+            trailing_triggered = (exit_price <= trailing_sl_price and highest > entry)
 
-        if change_pct >= TAKE_PROFIT_PCT or trailing_triggered or change_pct <= STOP_LOSS_PCT:
-            decision   = "SELL"
-            confidence = 100
-            print(f"[paper_engine.py] TP/SL triggered for a position!")
-            break
-    _save(state)  # persist updated highest_price
+            if change_pct >= TAKE_PROFIT_PCT or trailing_triggered or change_pct <= STOP_LOSS_PCT:
+                decision   = "SELL"
+                confidence = 100
+                print(f"[paper_engine.py] TP/SL triggered for a position!")
+                break
+        _save(state)  # persist updated highest_price
 
     # ── Confidence gate (skip TP/SL override) ────────────────
     effective_gate = min_confidence if min_confidence is not None else CONF_THRESHOLD
@@ -286,7 +291,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
         total_pnl = 0.0
         any_loss = False
         for pos in state["open_positions"]:
-            gross_proceeds = pos["size_bw"] * price_thb
+            gross_proceeds = pos["size_bw"] * exit_price
             close_fee    = _calc_fee(gross_proceeds)              # fee on close
             open_fee     = pos.get("open_fee", 0.0)
             net_proceeds = round(gross_proceeds - close_fee, 2)  # actually received
@@ -307,7 +312,7 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
                 "entry_time":  pos["entry_time"],
                 "exit_time":   now,
                 "entry_price": pos["entry_price"],
-                "exit_price":  price_thb,
+                "exit_price":  exit_price,
                 "size_bw":     pos["size_bw"],
                 "cost_thb":    pos["cost_thb"],
                 "open_fee":    open_fee,

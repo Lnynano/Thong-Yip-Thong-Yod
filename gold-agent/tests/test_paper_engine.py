@@ -22,7 +22,7 @@ def fresh() -> dict:
     return {
         "initial_balance": 1500.0,
         "balance":         1500.0,
-        "open_position":   None,
+        "open_positions":  [],
         "closed_trades":   [],
         "equity_history":  [{"time": "2026-01-01 00:00", "equity": 1500.0}],
     }
@@ -34,13 +34,13 @@ def state_with_position(entry_price: float = PRICE) -> dict:
     cost = s["balance"] * 0.95        # 1425 THB
     size = cost / entry_price
     s["balance"] -= cost
-    s["open_position"] = {
+    s["open_positions"] = [{
         "direction":   "BUY",
         "entry_price": entry_price,
         "size_bw":     round(size, 6),
         "cost_thb":    round(cost, 2),
         "entry_time":  "2026-01-01 09:00:00",
-    }
+    }]
     return s
 
 
@@ -100,28 +100,29 @@ class TestExecutePaperTrade:
 
         assert result["action"] == "OPENED"
         assert result["price_thb"] == PRICE
-        assert saved["open_position"] is not None
-        assert saved["open_position"]["direction"] == "BUY"
-        # conf=70% → 60% size_pct → cost = 1500 * 0.60 = 900 THB
-        assert abs(saved["open_position"]["cost_thb"] - 900.0) < 0.01
-        # balance should be 1500 - 900 = 600 THB
-        assert abs(saved["balance"] - 600.0) < 0.01
+        assert saved.get("open_positions") and len(saved["open_positions"]) > 0
+        assert saved["open_positions"][0]["direction"] == "BUY"
+        # conf=70% → 90% size_pct → cost = 1500 * 0.90 = 1350 THB
+        assert abs(saved["open_positions"][0]["cost_thb"] - 1350.0) < 0.01
+        # balance should be 1500 - 1350 = 150 THB
+        assert abs(saved["balance"] - 150.0) < 0.01
 
     def test_buy_size_calculation(self):
-        """size_bw = cost / price_thb — conf=70% uses 60% of balance = 900 / 45000"""
+        """size_bw = cost / price_thb — conf=70% uses 90% of balance"""
         s = fresh()
         with patch.object(pe, "_load", return_value=s), \
              patch.object(pe, "_save"):
             result = pe.execute_paper_trade("BUY", 70, PRICE)
-        expected_size = 900.0 / PRICE   # 60% allocation at conf=70%
+        expected_size = 1350.0 / PRICE   # 90% allocation at conf=70%
         assert abs(result["size_bw"] - expected_size) < 1e-6
 
     def test_buy_when_position_already_open_skips(self):
+        """Currently, it skips only if balance falls below minimum. Multiple positions are allowed."""
         with patch.object(pe, "_load", return_value=state_with_position()), \
              patch.object(pe, "_save"):
             result = pe.execute_paper_trade("BUY", 80, PRICE)
         assert result["action"] == "SKIP"
-        assert "Already holding" in result["reason"]
+        assert "minimum" in result["reason"].lower()
 
     def test_buy_when_balance_too_low_skips(self):
         s = fresh()
@@ -145,9 +146,9 @@ class TestExecutePaperTrade:
             result = pe.execute_paper_trade("SELL", 75, exit_price)
 
         assert result["action"] == "CLOSED"
-        assert result["outcome"] == "WIN"
+        assert result["trade"]["outcome"] == "WIN"
         assert result["pnl_thb"] > 0
-        assert saved["open_position"] is None
+        assert len(saved.get("open_positions", [])) == 0
         assert len(saved["closed_trades"]) == 1
 
     def test_sell_closes_position_with_loss(self):
@@ -158,7 +159,7 @@ class TestExecutePaperTrade:
             result = pe.execute_paper_trade("SELL", 75, exit_price)
 
         assert result["action"] == "CLOSED"
-        assert result["outcome"] == "LOSS"
+        assert result["trade"]["outcome"] == "LOSS"
         assert result["pnl_thb"] < 0
 
     def test_sell_pnl_calculation(self):
@@ -166,8 +167,8 @@ class TestExecutePaperTrade:
         entry_price = 45_000.0
         exit_price  = 46_000.0
         s = state_with_position(entry_price=entry_price)
-        cost    = s["open_position"]["cost_thb"]
-        size_bw = s["open_position"]["size_bw"]
+        cost    = s["open_positions"][0]["cost_thb"]
+        size_bw = s["open_positions"][0]["size_bw"]
         expected_pnl = (size_bw * exit_price) - cost
 
         with patch.object(pe, "_load", return_value=s), \
@@ -365,7 +366,7 @@ class TestResetPortfolio:
             pe.reset_portfolio()
 
         assert captured["balance"] == 1500.0
-        assert captured["open_position"] is None
+        assert captured["open_positions"] == []
         assert captured["closed_trades"] == []
 
     def test_reset_with_custom_balance(self):
@@ -397,12 +398,12 @@ class TestEdgeCases:
         assert len(saved_state["equity_history"]) <= 500
 
     def test_exact_minimum_balance_is_allowed(self):
-        """Balance exactly at MIN_TRADE_THB (1000) should be accepted."""
+        """Balance exactly at MIN_TRADE_THB (1000) should be accepted if confidence uses 100% size."""
         s = fresh()
         s["balance"] = 1000.0
         with patch.object(pe, "_load", return_value=s), \
              patch.object(pe, "_save"):
-            result = pe.execute_paper_trade("BUY", 70, PRICE)
+            result = pe.execute_paper_trade("BUY", 85, PRICE)  # conf=85 gets 100% sizing
         assert result["action"] == "OPENED"
 
     def test_one_below_minimum_balance_is_rejected(self):
