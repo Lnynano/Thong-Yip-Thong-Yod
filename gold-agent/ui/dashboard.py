@@ -530,7 +530,18 @@ def run_full_analysis(trade_mode: bool = False, force_pressure: bool = False) ->
         else:
             print("[dashboard.py] Pressure mode: OFF")
 
-        agent = run_agent(quota_pressure=_quota_pressure, open_positions=num_open)
+        if not can_trade_now() and not _quota_pressure:
+            print("[dashboard.py] Outside trading window: Skipping run_agent() to save API credits.")
+            agent = {
+                "decision": "HOLD",
+                "confidence": 0,
+                "reasoning": "Outside trading window. AI analysis suspended to save API credits.",
+                "key_factors": ["Outside window", "Standby mode active"],
+                "risk_note": "No active analysis."
+            }
+        else:
+            agent = run_agent(quota_pressure=_quota_pressure, open_positions=num_open)
+            
         decision = agent.get("decision", "HOLD")
         confidence = agent.get("confidence", 0)
         reasoning = agent.get("reasoning", "No reasoning.")

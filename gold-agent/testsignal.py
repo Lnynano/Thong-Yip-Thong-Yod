@@ -29,7 +29,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 #  ⚙️  CONFIG — Edit this section before running!
 # ═══════════════════════════════════════════════════════════════════════════
 
-SCENARIO = "manual"      # "live" | "buy" | "sell" | "sell_force" | "failsafe" | "quota" | "manual"
+SCENARIO = "live"      # "live" | "buy" | "sell" | "sell_force" | "failsafe" | "quota" | "manual"
 
 # ── Manual mode: used only when SCENARIO = "manual" ──────────────────────
 MANUAL_DECISION   = "SELL"           # "BUY" | "SELL" | "HOLD"
