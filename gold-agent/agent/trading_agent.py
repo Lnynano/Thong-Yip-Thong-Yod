@@ -534,7 +534,9 @@ def _execute_tool(
 # ─────────────────────────────────────────────────────────────
 # Safety Bounds Validator
 # ─────────────────────────────────────────────────────────────
-def _validate_decision(decision: dict) -> dict:
+def _validate_decision(
+    decision: dict, quota_pressure: bool = False, open_positions: int = 0
+) -> dict:
     """
     Validate the agent's output against hard-coded safety constraints.
 
@@ -561,12 +563,20 @@ def _validate_decision(decision: dict) -> dict:
         print(f"[trading_agent.py] Invalid decision '{raw_decision}' -> forcing HOLD")
         raw_decision = "HOLD"
 
+    # Safety check 1.5: FORCE trade if quota pressure is active
+    if quota_pressure and raw_decision == "HOLD":
+        raw_decision = "SELL" if open_positions > 0 else "BUY"
+        print(
+            f"[trading_agent.py] Quota pressure active -> overriding HOLD to {raw_decision}"
+        )
+        decision["confidence"] = 65
+
     # Safety check 2: Confidence bounds
     confidence = int(decision.get("confidence", 50))
     confidence = max(0, min(100, confidence))
 
     # Safety check 3: Low confidence → HOLD
-    if confidence < 40 and raw_decision != "HOLD":
+    if confidence < 40 and raw_decision != "HOLD" and not quota_pressure:
         print(f"[trading_agent.py] Low confidence {confidence}% -> forcing HOLD")
         raw_decision = "HOLD"
 
@@ -815,7 +825,9 @@ def run_agent(
                     return default_result
 
                 # Safety bounds validation
-                validated = _validate_decision(parsed)
+                validated = _validate_decision(
+                    parsed, quota_pressure=quota_pressure, open_positions=open_positions
+                )
                 validated["raw_response"] = final_text
                 validated["agent_trace"] = agent_trace
                 return validated

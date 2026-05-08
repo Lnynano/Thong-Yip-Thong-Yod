@@ -551,7 +551,7 @@ def run_full_analysis(trade_mode: bool = False, force_pressure: bool = False) ->
                 _min_conf = 50
 
             else:
-                _min_conf = 50 if _quota_pressure else None
+                _min_conf = 0 if _quota_pressure else None
                 
             thb_bid = hsh["buy"] if hsh else thb_now
             trade_result = execute_paper_trade(decision, confidence, thb_now, min_confidence=_min_conf, bid_price_thb=thb_bid)
