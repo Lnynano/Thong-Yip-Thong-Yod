@@ -25,17 +25,20 @@ _THAI_TZ = timezone(timedelta(hours=7))
 
 load_dotenv()
 
-PORTFOLIO_FILE  = os.path.join(os.path.dirname(__file__), "..", "data", "portfolio.json")
+PORTFOLIO_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "portfolio.json")
 DEFAULT_BALANCE = 1500.0
-MIN_TRADE_THB   = 1000.0
-CONF_THRESHOLD  = 65
+MIN_TRADE_THB = 1000.0
+CONF_THRESHOLD = 65
 
 # ── Risk management constants ─────────────────────────────────
-TAKE_PROFIT_PCT = 0.015   # +1.5% -> auto SELL (lock profit)
-STOP_LOSS_PCT   = -0.010  # -1.0% -> auto SELL (cut loss)
-TRAILING_SL_PCT = 0.007   # trailing stop: 0.7% below highest price since entry
-COOLDOWN_ROUNDS = 0       # normal cooldown (disabled)
-LOSS_COOLDOWN   = 1       # extra cooldown after a LOSS trade — skip 1 cycle to avoid revenge trading
+TAKE_PROFIT_PCT = 0.004  # +0.4% -> auto SELL (lock profit)
+STOP_LOSS_PCT = -0.003  # -0.3% -> auto SELL (cut loss)
+TRAILING_SL_PCT = 0.002  # trailing stop: 0.2% below highest price since entry
+COOLDOWN_ROUNDS = 0  # normal cooldown (disabled)
+LOSS_COOLDOWN = (
+    0  # extra cooldown after a LOSS trade — skip 1 cycle to avoid revenge trading
+)
+
 
 # ── Position sizing by confidence ────────────────────────────
 # Higher confidence = larger position. Prevents betting big on weak signals.
@@ -51,18 +54,19 @@ def _size_pct_by_confidence(confidence: int) -> float:
     else:
         return 0.90
 
+
 # ── Trading fee constants (loaded from env) ───────────────────
 # Applied on every transaction (both open and close).
 # TRADE_FEE_PCT      : percentage of trade value (e.g. 0.005 = 0.5% spread)
 # TRADE_FEE_FLAT_THB : flat fee in THB per transaction (e.g. 15 THB)
-TRADE_FEE_PCT      = float(os.getenv("TRADE_FEE_PCT", "0.005"))
+TRADE_FEE_PCT = float(os.getenv("TRADE_FEE_PCT", "0.005"))
 TRADE_FEE_FLAT_THB = float(os.getenv("TRADE_FEE_FLAT_THB", "0"))
 
 # ─────────────────────────────────────────────────────────────
 # MongoDB client (lazy init — only when MONGODB_URI is set)
 # ─────────────────────────────────────────────────────────────
 _mongo_client = None
-_mongo_db     = None
+_mongo_db = None
 
 
 def _get_mongo_collection(name: str):
@@ -74,8 +78,9 @@ def _get_mongo_collection(name: str):
     try:
         if _mongo_client is None:
             from pymongo import MongoClient
+
             _mongo_client = MongoClient(uri, serverSelectionTimeoutMS=5000)
-            _mongo_db     = _mongo_client["gold_agent"]
+            _mongo_db = _mongo_client["gold_agent"]
             print("[paper_engine.py] Connected to MongoDB Atlas.")
         return _mongo_db[name]
     except Exception as e:
@@ -106,17 +111,17 @@ def _load() -> dict:
                 state = json.load(f)
         except Exception:
             pass
-            
+
     if state is None:
         state = _fresh_state()
-        
+
     if "open_position" in state and state["open_position"] is not None:
         state.setdefault("open_positions", []).append(state["open_position"])
     if "open_position" in state:
         del state["open_position"]
     if "open_positions" not in state:
         state["open_positions"] = []
-        
+
     return state
 
 
@@ -146,25 +151,30 @@ def _fresh_state(initial_balance: float = DEFAULT_BALANCE) -> dict:
     """Return a blank portfolio state."""
     return {
         "initial_balance": initial_balance,
-        "balance":         initial_balance,
-        "open_positions":  [],
-        "closed_trades":   [],
-        "equity_history":  [
-            {"time": datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M"), "equity": initial_balance}
+        "balance": initial_balance,
+        "open_positions": [],
+        "closed_trades": [],
+        "equity_history": [
+            {
+                "time": datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M"),
+                "equity": initial_balance,
+            }
         ],
-        "cooldown":        0,   # rounds remaining before next BUY allowed
+        "cooldown": 0,  # rounds remaining before next BUY allowed
     }
 
 
 def _record_equity(state: dict, price_thb: float) -> None:
     """Append current total equity to history for the P&L curve."""
     positions = state.get("open_positions", [])
-    value     = sum(p["size_bw"] * price_thb for p in positions)
-    equity    = state["balance"] + value
-    state["equity_history"].append({
-        "time":   datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M"),
-        "equity": round(equity, 2),
-    })
+    value = sum(p["size_bw"] * price_thb for p in positions)
+    equity = state["balance"] + value
+    state["equity_history"].append(
+        {
+            "time": datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M"),
+            "equity": round(equity, 2),
+        }
+    )
     if len(state["equity_history"]) > 500:
         state["equity_history"] = state["equity_history"][-500:]
 
@@ -177,7 +187,13 @@ def _calc_fee(trade_value_thb: float) -> float:
     return round(trade_value_thb * TRADE_FEE_PCT + TRADE_FEE_FLAT_THB, 2)
 
 
-def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_confidence: int | None = None, bid_price_thb: float | None = None) -> dict:
+def execute_paper_trade(
+    decision: str,
+    confidence: int,
+    price_thb: float,
+    min_confidence: int | None = None,
+    bid_price_thb: float | None = None,
+) -> dict:
     """
     Evaluate the agent decision and simulate a trade if conditions are met.
 
@@ -223,10 +239,14 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
 
             # Trailing stop: if price drops TRAILING_SL_PCT below the peak
             trailing_sl_price = highest * (1 - TRAILING_SL_PCT)
-            trailing_triggered = (exit_price <= trailing_sl_price and highest > entry)
+            trailing_triggered = exit_price <= trailing_sl_price and highest > entry
 
-            if change_pct >= TAKE_PROFIT_PCT or trailing_triggered or change_pct <= STOP_LOSS_PCT:
-                decision   = "SELL"
+            if (
+                change_pct >= TAKE_PROFIT_PCT
+                or trailing_triggered
+                or change_pct <= STOP_LOSS_PCT
+            ):
+                decision = "SELL"
                 confidence = 100
                 print(f"[paper_engine.py] TP/SL triggered for a position!")
                 break
@@ -235,56 +255,74 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
     # ── Confidence gate (skip TP/SL override) ────────────────
     effective_gate = min_confidence if min_confidence is not None else CONF_THRESHOLD
     if confidence < effective_gate:
-        return {"action": "SKIP",
-                "reason": f"Confidence {confidence}% < {effective_gate}% threshold"}
+        return {
+            "action": "SKIP",
+            "reason": f"Confidence {confidence}% < {effective_gate}% threshold",
+        }
 
     # ── Cooldown check ────────────────────────────────────────
     cooldown = state.get("cooldown", 0)
     if cooldown > 0 and decision == "BUY":
         state["cooldown"] = cooldown - 1
         _save(state)
-        return {"action": "SKIP",
-                "reason": f"Cooldown active — {cooldown} round(s) remaining"}
+        return {
+            "action": "SKIP",
+            "reason": f"Cooldown active — {cooldown} round(s) remaining",
+        }
 
     # ── Open long ────────────────────────────────────────────
     if decision == "BUY":
         available = state["balance"]
         if available < MIN_TRADE_THB:
-            return {"action": "SKIP",
-                    "reason": f"Balance {available:.0f} THB < minimum {MIN_TRADE_THB:.0f} THB"}
+            return {
+                "action": "SKIP",
+                "reason": f"Balance {available:.0f} THB < minimum {MIN_TRADE_THB:.0f} THB",
+            }
 
         size_pct = _size_pct_by_confidence(confidence)
-        gross   = available * size_pct      # confidence-scaled position    
+        gross = available * size_pct  # confidence-scaled position
         if gross < MIN_TRADE_THB:
-            return {"action": "SKIP", "reason": f"Trade size {gross:.0f} THB < minimum 1000 THB"}
-        fee     = _calc_fee(gross)          # fee on open
-        cost    = round(gross + fee, 2)     # total deducted from balance
-        size_bw = gross / price_thb         # gold bought with gross amount (fee is overhead)
+            return {
+                "action": "SKIP",
+                "reason": f"Trade size {gross:.0f} THB < minimum 1000 THB",
+            }
+        fee = _calc_fee(gross)  # fee on open
+        cost = round(gross + fee, 2)  # total deducted from balance
+        size_bw = gross / price_thb  # gold bought with gross amount (fee is overhead)
 
-        state["balance"]       -= cost
-        state["open_positions"].append({
-            "direction":    "BUY",
-            "entry_price":  price_thb,
-            "highest_price": price_thb,   # for trailing stop
-            "size_bw":      round(size_bw, 6),
-            "cost_thb":     round(gross, 2),  # gross cost (excluding fee) for P&L base
-            "open_fee":     fee,
-            "entry_time":   now,
-            "confidence":   confidence,
-            "size_pct":     size_pct,
-        })
+        state["balance"] -= cost
+        state["open_positions"].append(
+            {
+                "direction": "BUY",
+                "entry_price": price_thb,
+                "highest_price": price_thb,  # for trailing stop
+                "size_bw": round(size_bw, 6),
+                "cost_thb": round(gross, 2),  # gross cost (excluding fee) for P&L base
+                "open_fee": fee,
+                "entry_time": now,
+                "confidence": confidence,
+                "size_pct": size_pct,
+            }
+        )
         state["cooldown"] = 0
         _record_equity(state, price_thb)
         _save(state)
-        print(f"[paper_engine.py] OPENED  {size_bw:.5f} bw @ {price_thb:,.0f} THB  "
-              f"conf={confidence}% size={size_pct*100:.0f}%  fee={fee:.2f} THB  "
-              f"TP={price_thb*(1+TAKE_PROFIT_PCT):,.0f} (calculated)  "
-              f"SL={price_thb*(1+STOP_LOSS_PCT):,.0f} (calculated)  "
-              f"Trail={TRAILING_SL_PCT*100:.1f}%")
-        return {"action": "OPENED", "size_bw": size_bw,
-                "price_thb": price_thb, "cost_thb": gross, "fee_thb": fee,
-                "tp_price": round(price_thb * (1 + TAKE_PROFIT_PCT), 0),
-                "sl_price": round(price_thb * (1 + STOP_LOSS_PCT), 0)}
+        print(
+            f"[paper_engine.py] OPENED  {size_bw:.5f} bw @ {price_thb:,.0f} THB  "
+            f"conf={confidence}% size={size_pct*100:.0f}%  fee={fee:.2f} THB  "
+            f"TP={price_thb*(1+TAKE_PROFIT_PCT):,.0f} (calculated)  "
+            f"SL={price_thb*(1+STOP_LOSS_PCT):,.0f} (calculated)  "
+            f"Trail={TRAILING_SL_PCT*100:.1f}%"
+        )
+        return {
+            "action": "OPENED",
+            "size_bw": size_bw,
+            "price_thb": price_thb,
+            "cost_thb": gross,
+            "fee_thb": fee,
+            "tp_price": round(price_thb * (1 + TAKE_PROFIT_PCT), 0),
+            "sl_price": round(price_thb * (1 + STOP_LOSS_PCT), 0),
+        }
 
     # ── Close long ───────────────────────────────────────────
     if decision == "SELL" and state.get("open_positions"):
@@ -292,10 +330,10 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
         any_loss = False
         for pos in state["open_positions"]:
             gross_proceeds = pos["size_bw"] * exit_price
-            close_fee    = _calc_fee(gross_proceeds)              # fee on close
-            open_fee     = pos.get("open_fee", 0.0)
+            close_fee = _calc_fee(gross_proceeds)  # fee on close
+            open_fee = pos.get("open_fee", 0.0)
             net_proceeds = round(gross_proceeds - close_fee, 2)  # actually received
-            total_fees   = round(open_fee + close_fee, 2)
+            total_fees = round(open_fee + close_fee, 2)
 
             # ✅ FIX: include open_fee
             pnl = net_proceeds - pos["cost_thb"] - open_fee
@@ -303,39 +341,46 @@ def execute_paper_trade(decision: str, confidence: int, price_thb: float, min_co
             # ✅ FIX: use full cost (gross + open fee)
             total_cost = pos["cost_thb"] + open_fee
             pnl_pct = pnl / total_cost * 100 if total_cost > 0 else 0.0
-            
+
             total_pnl += pnl
-            if pnl < 0: any_loss = True
-            
+            if pnl < 0:
+                any_loss = True
+
             state["balance"] = max(0.0, state["balance"] + net_proceeds)  # floor at 0
             trade = {
-                "entry_time":  pos["entry_time"],
-                "exit_time":   now,
+                "entry_time": pos["entry_time"],
+                "exit_time": now,
                 "entry_price": pos["entry_price"],
-                "exit_price":  exit_price,
-                "size_bw":     pos["size_bw"],
-                "cost_thb":    pos["cost_thb"],
-                "open_fee":    open_fee,
-                "close_fee":   close_fee,
-                "total_fees":  total_fees,
-                "pnl_thb":     round(pnl, 2),
-                "pnl_pct":     round(pnl_pct, 2),
-                "outcome":     "WIN" if pnl >= 0 else "LOSS",
+                "exit_price": exit_price,
+                "size_bw": pos["size_bw"],
+                "cost_thb": pos["cost_thb"],
+                "open_fee": open_fee,
+                "close_fee": close_fee,
+                "total_fees": total_fees,
+                "pnl_thb": round(pnl, 2),
+                "pnl_pct": round(pnl_pct, 2),
+                "outcome": "WIN" if pnl >= 0 else "LOSS",
             }
             state["closed_trades"].append(trade)
-            
+
         state["open_positions"] = []
         # Cooldown: extra pause after a LOSS to prevent revenge trading
         cooldown_applied = LOSS_COOLDOWN if any_loss else COOLDOWN_ROUNDS
         state["cooldown"] = cooldown_applied
         _save(state)  # ✅ CRITICAL FIX: Persist the closed state to DB
-        print(f"[paper_engine.py] CLOSED  BASKET  "
-              f"Total P&L {total_pnl:+.2f} THB  cooldown={cooldown_applied} rounds")
-        return {"action": "CLOSED", "pnl_thb": total_pnl, "trade": state["closed_trades"][-1]}
+        print(
+            f"[paper_engine.py] CLOSED  BASKET  "
+            f"Total P&L {total_pnl:+.2f} THB  cooldown={cooldown_applied} rounds"
+        )
+        return {
+            "action": "CLOSED",
+            "pnl_thb": total_pnl,
+            "trade": state["closed_trades"][-1],
+        }
 
     # Tick down cooldown on HOLD too
     if cooldown > 0:
-        state["cooldown"] = cooldown - 1    
+        state["cooldown"] = cooldown - 1
         _save(state)
 
     return {"action": "HOLD", "reason": "Signal is HOLD or no matching position"}
@@ -352,35 +397,40 @@ def sync_manual_buy(price_thb: float) -> dict:
 
     now = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
     available = state["balance"]
-    
+
     # Use 95% of balance for manual sync
     gross = available * 0.95
     if gross < MIN_TRADE_THB:
-        return {"error": f"Insufficient balance (฿{available:,.0f}) for ฿{MIN_TRADE_THB:,.0f} min trade"}
+        return {
+            "error": f"Insufficient balance (฿{available:,.0f}) for ฿{MIN_TRADE_THB:,.0f} min trade"
+        }
 
     fee = _calc_fee(gross)
     cost = round(gross + fee, 2)
     size_bw = gross / price_thb
 
     state["balance"] -= cost
-    state["open_positions"].append({
-        "direction": "BUY",
-        "entry_price": price_thb,
-        "highest_price": price_thb,
-        "size_bw": round(size_bw, 6),
-        "cost_thb": round(gross, 2),
-        "open_fee": fee,
-        "entry_time": now,
-        "confidence": 100,
-        "size_pct": 0.95,
-        "is_manual_sync": True
-    })
+    state["open_positions"].append(
+        {
+            "direction": "BUY",
+            "entry_price": price_thb,
+            "highest_price": price_thb,
+            "size_bw": round(size_bw, 6),
+            "cost_thb": round(gross, 2),
+            "open_fee": fee,
+            "entry_time": now,
+            "confidence": 100,
+            "size_pct": 0.95,
+            "is_manual_sync": True,
+        }
+    )
     _record_equity(state, price_thb)
     _save(state)
-    
+
     # Increment quota count so the bot knows a manual trade happened
     try:
         from trader.trade_scheduler import record_trade
+
         record_trade()
     except Exception:
         pass
@@ -397,49 +447,51 @@ def sync_manual_sell(price_thb: float) -> dict:
     state = _load()
     if not state.get("open_positions"):
         return {"error": "No open positions to sync"}
-    
+
     now = datetime.now(_THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
     total_pnl = 0.0
-    
+
     for pos in state["open_positions"]:
         gross_proceeds = pos["size_bw"] * price_thb
         close_fee = _calc_fee(gross_proceeds)
         open_fee = pos.get("open_fee", 0.0)
         net_proceeds = round(gross_proceeds - close_fee, 2)
-        
+
         pnl = net_proceeds - pos["cost_thb"] - open_fee
         total_pnl += pnl
-        
+
         state["balance"] = max(0.0, state["balance"] + net_proceeds)
-        state["closed_trades"].append({
-            "entry_time": pos["entry_time"],
-            "exit_time": now,
-            "entry_price": pos["entry_price"],
-            "exit_price": price_thb,
-            "size_bw": pos["size_bw"],
-            "cost_thb": pos["cost_thb"],
-            "open_fee": open_fee,
-            "close_fee": close_fee,
-            "total_fees": round(open_fee + close_fee, 2),
-            "pnl_thb": round(pnl, 2),
-            "pnl_pct": round(pnl / (pos["cost_thb"] + open_fee) * 100, 2),
-            "outcome": "WIN" if pnl >= 0 else "LOSS",
-            "is_manual_sync": True
-        })
-        
+        state["closed_trades"].append(
+            {
+                "entry_time": pos["entry_time"],
+                "exit_time": now,
+                "entry_price": pos["entry_price"],
+                "exit_price": price_thb,
+                "size_bw": pos["size_bw"],
+                "cost_thb": pos["cost_thb"],
+                "open_fee": open_fee,
+                "close_fee": close_fee,
+                "total_fees": round(open_fee + close_fee, 2),
+                "pnl_thb": round(pnl, 2),
+                "pnl_pct": round(pnl / (pos["cost_thb"] + open_fee) * 100, 2),
+                "outcome": "WIN" if pnl >= 0 else "LOSS",
+                "is_manual_sync": True,
+            }
+        )
+
     state["open_positions"] = []
     _save(state)
 
     # Increment quota count
     try:
         from trader.trade_scheduler import record_trade
+
         record_trade()
     except Exception:
         pass
 
     print(f"[paper_engine.py] MANUAL SYNC: CLOSED all positions at {price_thb:,.0f}")
     return {"action": "CLOSED", "pnl": total_pnl}
-
 
 
 # ─────────────────────────────────────────────────────────────
@@ -452,59 +504,74 @@ def get_portfolio_summary(current_price_thb: float = 0.0) -> dict:
     Args:
         current_price_thb: latest price to compute unrealised P&L.
     """
-    state  = _load()
+    state = _load()
     closed = state["closed_trades"]
     positions = state.get("open_positions", [])
-    
-    wins   = [t for t in closed if t["outcome"] == "WIN"]
+
+    wins = [t for t in closed if t["outcome"] == "WIN"]
     losses = [t for t in closed if t["outcome"] == "LOSS"]
 
     realized_pnl = sum(t["pnl_thb"] for t in closed)
-    total_fees   = sum(t.get("total_fees", 0.0) for t in closed)
-    win_rate     = len(wins) / len(closed) if closed else 0.0
-    avg_win      = sum(t["pnl_thb"] for t in wins)  / len(wins)  if wins   else 0.0
-    avg_loss_val = abs(sum(t["pnl_thb"] for t in losses) / len(losses)) if losses else 0.0
-    rr_ratio     = avg_win / avg_loss_val if avg_loss_val > 0 else 0.0
+    total_fees = sum(t.get("total_fees", 0.0) for t in closed)
+    win_rate = len(wins) / len(closed) if closed else 0.0
+    avg_win = sum(t["pnl_thb"] for t in wins) / len(wins) if wins else 0.0
+    avg_loss_val = (
+        abs(sum(t["pnl_thb"] for t in losses) / len(losses)) if losses else 0.0
+    )
+    rr_ratio = avg_win / avg_loss_val if avg_loss_val > 0 else 0.0
 
     unrealized_pnl = 0.0
-    open_info      = None
+    open_info = None
     if positions and current_price_thb > 0:
-        unrealized_pnl = sum((pos["size_bw"] * current_price_thb) - pos["cost_thb"] for pos in positions)
+        unrealized_pnl = sum(
+            (pos["size_bw"] * current_price_thb) - pos["cost_thb"] for pos in positions
+        )
         total_cost = sum(pos["cost_thb"] for pos in positions)
         open_info = {
-            "entry_price":    positions[-1]["entry_price"],  # Just show latest for UI simplicity
-            "current_price":  current_price_thb,
-            "size_bw":        sum(pos["size_bw"] for pos in positions),
-            "cost_thb":       total_cost,
-            "unrealized":     round(unrealized_pnl, 2),
-            "unrealized_pct": round(unrealized_pnl / total_cost * 100, 2) if total_cost > 0 else 0.0,
-            "entry_time":     positions[-1]["entry_time"],
+            "entry_price": positions[-1][
+                "entry_price"
+            ],  # Just show latest for UI simplicity
+            "current_price": current_price_thb,
+            "size_bw": sum(pos["size_bw"] for pos in positions),
+            "cost_thb": total_cost,
+            "unrealized": round(unrealized_pnl, 2),
+            "unrealized_pct": (
+                round(unrealized_pnl / total_cost * 100, 2) if total_cost > 0 else 0.0
+            ),
+            "entry_time": positions[-1]["entry_time"],
         }
 
-    pos_value = sum((pos["size_bw"] * current_price_thb) if current_price_thb > 0 else pos["cost_thb"] for pos in positions)
+    pos_value = sum(
+        (
+            (pos["size_bw"] * current_price_thb)
+            if current_price_thb > 0
+            else pos["cost_thb"]
+        )
+        for pos in positions
+    )
     total_equity = state["balance"] + pos_value
-    total_pnl    = total_equity - state["initial_balance"]
+    total_pnl = total_equity - state["initial_balance"]
 
     return {
         "initial_balance": state["initial_balance"],
-        "cash_balance":    round(state["balance"], 2),
-        "total_equity":    round(total_equity, 2),
-        "realized_pnl":    round(realized_pnl, 2),
-        "unrealized_pnl":  round(unrealized_pnl, 2),
-        "total_pnl":       round(total_pnl, 2),
-        "total_pnl_pct":   round(total_pnl / state["initial_balance"] * 100, 2),
-        "win_rate":        round(win_rate * 100, 1),
-        "wins":            len(wins),
-        "losses":          len(losses),
-        "total_trades":    len(closed),
-        "rr_ratio":        round(rr_ratio, 2),
-        "open_position":   open_info,
-        "has_position":    len(positions) > 0,
-        "avg_win":         round(avg_win, 2),
-        "avg_loss":        round(avg_loss_val, 2),
-        "total_fees":      round(total_fees, 2),
-        "fee_pct":         TRADE_FEE_PCT,
-        "fee_flat":        TRADE_FEE_FLAT_THB,
+        "cash_balance": round(state["balance"], 2),
+        "total_equity": round(total_equity, 2),
+        "realized_pnl": round(realized_pnl, 2),
+        "unrealized_pnl": round(unrealized_pnl, 2),
+        "total_pnl": round(total_pnl, 2),
+        "total_pnl_pct": round(total_pnl / state["initial_balance"] * 100, 2),
+        "win_rate": round(win_rate * 100, 1),
+        "wins": len(wins),
+        "losses": len(losses),
+        "total_trades": len(closed),
+        "rr_ratio": round(rr_ratio, 2),
+        "open_position": open_info,
+        "has_position": len(positions) > 0,
+        "avg_win": round(avg_win, 2),
+        "avg_loss": round(avg_loss_val, 2),
+        "total_fees": round(total_fees, 2),
+        "fee_pct": TRADE_FEE_PCT,
+        "fee_flat": TRADE_FEE_FLAT_THB,
     }
 
 
@@ -536,6 +603,7 @@ def get_performance_report(current_price_thb: float = 0.0) -> str:
     # LLM costs
     try:
         from logger.cost_tracker import get_cost_summary
+
         cost = get_cost_summary()
         llm_cost = cost["total_cost_thb"]
         llm_calls = cost["call_count"]
