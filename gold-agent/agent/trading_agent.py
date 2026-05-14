@@ -566,6 +566,14 @@ def _validate_decision(
         print(f"[trading_agent.py] Invalid decision '{raw_decision}' -> forcing HOLD")
         raw_decision = "HOLD"
 
+    # Safety check 1.2: Prevent hallucinated invalid directions based on portfolio state
+    if open_positions == 0 and raw_decision == "SELL":
+        print("[trading_agent.py] Agent hallucinated SELL with empty portfolio -> forcing HOLD")
+        raw_decision = "HOLD"
+    elif open_positions >= 1 and raw_decision == "BUY":
+        print("[trading_agent.py] Agent hallucinated BUY with full portfolio -> forcing HOLD")
+        raw_decision = "HOLD"
+
     # Safety check 1.5: FORCE trade if quota pressure is active
     if quota_pressure and raw_decision == "HOLD":
         raw_decision = "SELL" if open_positions > 0 else "BUY"
