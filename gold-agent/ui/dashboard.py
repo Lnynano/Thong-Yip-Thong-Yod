@@ -548,9 +548,6 @@ def run_full_analysis(trade_mode: bool = False, force_pressure: bool = False) ->
 
         failsafe_triggered = False  # Auto-failsafe disabled per user request
 
-
-        if decision in ("BUY", "SELL") and can_trade_now(): record_trade()
-
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
         if not api_key or api_key == "your_key_here": reasoning = "OPENAI_API_KEY not set.\nAdd it to your .env file to enable GPT analysis."
 
@@ -577,6 +574,8 @@ def run_full_analysis(trade_mode: bool = False, force_pressure: bool = False) ->
         elif trade_mode and not can_trade_now(): trade_result = {"action": "SKIP", "reason": "Outside trading window"}
         else: trade_result = {"action": "DISABLED", "reason": "Trade mode is OFF"}
 
+        if trade_result.get("action") in ("OPENED", "CLOSED"): record_trade()
+
         portfolio = get_portfolio_summary(thb_now)
         try:
             from logger.cost_tracker import get_cost_summary
@@ -596,6 +595,13 @@ def run_full_analysis(trade_mode: bool = False, force_pressure: bool = False) ->
         from logger.trade_log import log_analysis, get_recent_logs, send_trade_log
         from risk.metrics import calculate_risk
         risk = calculate_risk(df)
+
+        action_res = trade_result.get("action", "")
+        if action_res == "SKIP" and decision in ("BUY", "SELL"):
+            reasoning = f"[SKIPPED: {trade_result.get('reason')}] {reasoning}"
+        elif action_res == "DISABLED" and decision in ("BUY", "SELL"):
+            reasoning = f"[DISABLED: Trade mode OFF] {reasoning}"
+
         log_analysis(decision=decision, confidence=confidence, price_usd=f"${price_usd:,.2f}", price_thb=f"฿{thb_now:,.0f}", rsi=rsi_str, macd=macd_str, sharpe=f"{risk['sharpe']:.2f}", reasoning=reasoning)
         send_trade_log(action=decision, price_thb=thb_now, reason=reasoning, confidence=confidence)
 

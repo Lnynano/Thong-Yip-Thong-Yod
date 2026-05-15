@@ -106,6 +106,12 @@ def _save_state(state: dict) -> None:
 
 def _get_windows() -> list[dict]:
     now = datetime.now(_THAI_TZ)
+    
+    # If it is Saturday morning before 03:00, use Friday's logical schedule
+    # so the evening continuation window (00:00 - 02:00) doesn't get cut off.
+    if now.weekday() == 5 and now.hour <= 2:
+        return _WEEKDAY_LOGICAL
+        
     return _WEEKEND_LOGICAL if now.weekday() >= 5 else _WEEKDAY_LOGICAL
 
 
