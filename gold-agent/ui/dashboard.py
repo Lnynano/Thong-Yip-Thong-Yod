@@ -566,6 +566,14 @@ def run_full_analysis(trade_mode: bool = False, force_pressure: bool = False) ->
                 
             thb_bid = hsh["buy"] if hsh else thb_now
             trade_result = execute_paper_trade(decision, confidence, thb_now, min_confidence=_min_conf, bid_price_thb=thb_bid)
+            
+            # ✅ FIX: Catch auto-SL/TP overrides so they appear in trade_log.csv
+            if trade_result.get("action") == "CLOSED" and decision != "SELL":
+                override_pnl = trade_result.get("trade", {}).get("pnl_pct", 0.0)
+                reasoning = f"SYSTEM OVERRIDE: Position automatically closed by Stop-Loss / Take-Profit (P&L: {override_pnl:+.2f}%). Original agent decision was {decision}."
+                decision = "SELL"
+                confidence = 100
+                
         elif trade_mode and not can_trade_now(): trade_result = {"action": "SKIP", "reason": "Outside trading window"}
         else: trade_result = {"action": "DISABLED", "reason": "Trade mode is OFF"}
 
